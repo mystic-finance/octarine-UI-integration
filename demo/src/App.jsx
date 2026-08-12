@@ -119,7 +119,7 @@ export default function App() {
   return (
     <div className="app">
       <header>
-        <h1>Octarine UI demo</h1>
+        <h1>Octarine Frontend Integration Demo</h1>
         <div className="bar">
           <select value={chainId} onChange={(e) => setChainId(Number(e.target.value))}>
             {chains.map((c) => (

@@ -12,6 +12,16 @@ npm run dev        # http://localhost:5173
 
 Then: connect a wallet → pick a chain → pick a token pair and amount → **Create auction**. It appears under **My auctions**; once a market maker bids, hit **Accept**.
 
+## Deploy
+
+Cloudflare Workers static assets, configured in `wrangler.jsonc`:
+
+```bash
+npm run deploy      # builds, then npx wrangler deploy
+```
+
+First run will prompt you to log in. Change `name` in `wrangler.jsonc` to pick the `*.workers.dev` subdomain.
+
 ## Files
 
 | File | What's in it |

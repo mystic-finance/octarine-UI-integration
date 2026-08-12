@@ -1,0 +1,10 @@
+{
+  "name": "octarine-demo",
+  "compatibility_date": "2026-08-12",
+  // Static assets only, there is no Worker script. `not_found_handling` sends
+  // any unknown path back to index.html so the app still loads on a deep link.
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "single-page-application"
+  }
+}
