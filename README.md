@@ -8,7 +8,7 @@ Octarine is an RFQ and auction venue for tokenised real-world assets and other i
 | **Staging** | `https://staging-api.mysticfinance.xyz` — same API, safe to experiment against |
 | **All routes below** | prefixed `/octarine` |
 | **Interactive API docs** | [Swagger](https://api.mysticfinance.xyz/docs) ([staging](https://staging-api.mysticfinance.xyz/docs)) |
-| **Runnable demo** | [`demo/`](demo) |
+| **Live demo** | [demo.octarine.finance](https://demo.octarine.finance/) — source in [`demo/`](demo) |
 | **Support** | [joao.moreira@mysticfinance.xyz](mailto:joao.moreira@mysticfinance.xyz) |
 
 ---
