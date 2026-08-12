@@ -56,19 +56,11 @@ Both come from `POST /octarine/swap`. `fullAuctionEnabled` is the only differenc
 |---|---|---|
 | Body | `fullAuctionEnabled` omitted or `false` | `fullAuctionEnabled: true` |
 | Typical `expiry` | Minutes as you expect an answer now | Hours or days as you're waiting for price discovery |
-| Listed by `GET /requests?fullAuctionEnabled=true` | No | Yes |
-| Listed by `GET /requests?fullAuctionEnabled=false` | Yes | Yes |
 | Use for | Pairs with resting liquidity | Illiquid assets, large size, anything needing price discovery |
 
 **Both instant and full auctions produce the same record**, and makers bid on both the same way. `fullAuctionEnabled` is a discoverability tag  used to filter instant and full auctions; the endpoint returns everything when the filter is omitted. The real difference is the `expiry` you choose, and that is a single decision made at creation time.
 
 An empty `bids` array is not an error and not a dead end. The request stays live and biddable until `expiryTime`, so you can **keep polling the same `requestId`** to get updates on the request.
-
-### The `expiry` field
-
-`expiry` which is in **minutes** with a default `15` sets the bidding window, and it is the last moment a bid can be accepted, and the value your row-state logic should use.
-
-> **Some assets override this.** Where either leg is an asset that settles through a partner network, the window is floored at **24 hours** regardless of what you send. `expiry: 60` on such a pair still yields a 24-hour window. Always read `expiryTime` off the response rather than computing it from what you sent.
 
 ---
 
@@ -87,7 +79,9 @@ An empty `bids` array is not an error and not a dead end. The request stays live
 
 **Timestamps are unix seconds** (`expiryTime`, `biddingCloseTime`, `bid.expiry`), except `createdAt`/`updatedAt` which are ISO 8601.
 
-Every example below uses production. Swap the host for `staging-api.mysticfinance.xyz` to point the same calls at staging.
+---
+
+Every example below uses production. Swap the base url for `staging-api.mysticfinance.xyz` to point the same calls at staging.
 
 ```js
 const BASE = 'https://api.mysticfinance.xyz/octarine';
@@ -173,7 +167,7 @@ const request = await res.json();
 }
 ```
 
-> **This is a write.** Every call publishes a live RFQ that makers can bid on. Debounce it behind user input (~1.2s after the last keystroke), firing per keystroke on the way from `1` to `1000` floods the board with throwaway requests.
+> **This is a write.** Every call publishes a live RFQ that makers can bid on.
 
 Keep `requestId`. It is the handle for everything downstream.
 
@@ -441,8 +435,6 @@ Two things to know about `status`: it **overrides `open`** when both are sent, a
 
 **`fee` is in raw sell-token units and `takerAmount` is already net of it**, so the rate is `fee / (takerAmount + fee)`.
 
-**Debounce `POST /swap`.** Each call is a live RFQ on the public board.
-
 
 ---
 
@@ -642,7 +634,7 @@ Some assets are **permissioned**: the issuer gates transfers behind a whitelist,
 
 ## Fees
 
-A protocol fee is taken in the **sell token** and collected on-chain to `feeRecipient` at settlement. It's already reflected in the numbers you display:
+A protocol fee is taken in the **buy token** and collected on-chain to `feeRecipient` at settlement. It's already reflected in the numbers you display:
 
 - `request.fee` (and `bid.fee`, the same value) is the fee in raw sell-token units.
 - `bid.takerAmount` is the sell amount **net of** it.
@@ -664,7 +656,7 @@ Standard HTTP statuses with a body of:
 { "statusCode": 400, "message": "Chain ID 137 is not supported…", "error": "Bad Request" }
 ```
 
-**Branch on the status; show the `message`.** There are no stable error codes, but `message` is written to be read by end users and carries the reason.
+**Check on the status; show the `message`.** The `message` is written to be read by end users and carries the reason.
 
 | HTTP | Meaning | What to do |
 |---|---|---|
@@ -672,6 +664,7 @@ Standard HTTP statuses with a body of:
 | `404` | Unknown `requestId` or `bidId`. | Re-read the list; it may have expired and been swept. |
 | `429` | Rate limited (`POST /swap` is capped at 1000/min). | Back off. Debouncing usually fixes it. |
 | `500` / `502` | Upstream RPC or oracle failure. | Retry with backoff. |
+
 
 Failure modes worth handling explicitly:
 
