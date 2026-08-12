@@ -22,6 +22,7 @@ Then: connect a wallet → pick a chain → pick a token pair and amount → **C
 
 ## Notes
 
+- Points at **staging** (`https://staging-api.mysticfinance.xyz`). Change `BASE` in `src/api.js` to `https://api.mysticfinance.xyz` for production.
 - No credentials anywhere — every endpoint the demo touches is open. See [Authentication](../README.md#authentication).
 - Nothing appears under My auctions until you place one — the list is scoped to `fullAuctionEnabled=true`. Drop that filter in `MyAuctions` to also see instant-swap requests.
 - If the chain selector and your wallet disagree, `signerOn` switches the wallet before signing. That is deliberate — see [Executing a bid](../README.md#4-execute-the-bid).

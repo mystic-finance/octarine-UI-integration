@@ -4,9 +4,10 @@ Octarine is an RFQ and auction venue for tokenised real-world assets and other i
 
 | | |
 |---|---|
-| **Base URL** | `https://api.mysticfinance.xyz` |
+| **Production** | `https://api.mysticfinance.xyz` |
+| **Staging** | `https://staging-api.mysticfinance.xyz` — same API, safe to experiment against |
 | **All routes below** | prefixed `/octarine` |
-| **Interactive API docs** | [Swagger](https://api.mysticfinance.xyz/docs) |
+| **Interactive API docs** | [Swagger](https://api.mysticfinance.xyz/docs) ([staging](https://staging-api.mysticfinance.xyz/docs)) |
 | **Runnable demo** | [`demo/`](demo) |
 | **Support** | [joao.moreira@mysticfinance.xyz](mailto:joao.moreira@mysticfinance.xyz) |
 
@@ -85,6 +86,8 @@ An empty `bids` array is not an error and not a dead end. The request stays live
 | — | `makerAmount` | What the maker offers, base units |
 
 **Timestamps are unix seconds** (`expiryTime`, `biddingCloseTime`, `bid.expiry`), except `createdAt`/`updatedAt` which are ISO 8601.
+
+Every example below uses production. Swap the host for `staging-api.mysticfinance.xyz` to point the same calls at staging.
 
 ```js
 const BASE = 'https://api.mysticfinance.xyz/octarine';
@@ -370,7 +373,7 @@ Show `scheduleSettlementTime` as the settlement deadline. Poll `GET /swap/:reque
 `GET /orders/:address` returns every request a wallet placed, newest first, the data behind an "my orders" view.
 
 ```js
-const q = new URLSearchParams({ chainId, page: 1, limit: 10, timeRange: 'all_time', fullAuctionEnabled: true });
+const q = new URLSearchParams({ chainId, page: 1, limit: 10, timeRange: 'all_time' });
 const { data } = await (await fetch(`${BASE}/orders/${userAddress}?${q}`)).json();
 ```
 
@@ -397,15 +400,38 @@ const { data } = await (await fetch(`${BASE}/orders/${userAddress}?${q}`)).json(
 }
 ```
 
-Three things make this the right endpoint for a queue view:
+Two things make this the right endpoint for a history view:
 
 - **`amount` is already human-scaled** — a float, not base units. The only endpoint that does the decimal maths for you.
 - **`bid`** carries the best active bid inline on every non-filled row, so a table can show a live number without a fetch per row. `null` when there are none.
-- **`fullAuctionEnabled=true`** filters server-side to auction-flow requests, so pagination is honest. Drop it to include instant requests too.
 
-Filtering and pagination are server-side. Don't fetch `limit=200` and filter in the client.
+Add `fullAuctionEnabled=true` to narrow it to full auction flow requests only; omit it and you get everything the wallet placed. Filtering and pagination are server-side, don't fetch `limit=200` and filter in the client.
+
+### Only the ones the user can act on
+
+For a queue view — "here's what's waiting on you" rather than a full history — pass `open=true`:
+
+```js
+const q = new URLSearchParams({ user: userAddress, chainId, open: true, limit: 10 });
+const { data } = await (await fetch(`${BASE}/orders/${userAddress}?${q}`)).json();
+```
+
+That's shorthand for *pending or bidding, and not past `expiryTime`*. Filled, cancelled and expired rows never come back, so every row you get has an Accept button on it and you can skip the state derivation below entirely.
+
+For anything more specific, `status` takes a comma-separated list of request statuses:
+
+| Want | Send |
+|---|---|
+| Still actionable | `open=true` |
+| Bids have landed | `status=bidding` |
+| Closed out | `status=filled,cancelled,expired` |
+| Everything | *neither* |
+
+Two things to know about `status`: it **overrides `open`** when both are sent, and unlike `open` it is **not expiry-guarded** — a row still marked `bidding` in the database shows up even if its window has closed, because hiding the user's own order would make it look like it never existed. An unrecognised value is a `400` listing the valid ones, rather than an empty list you'd have to debug.
 
 ### Deriving row state
+
+Needed for a full-history view, where rows in any status come back. (With `open=true` the server has already done this for you.)
 
 `status` lags reality in both directions, so apply these in order:
 
@@ -437,7 +463,6 @@ Only `live` rows can be accepted. Between your transaction confirming and `/orde
 
 **Debounce `POST /swap`.** Each call is a live RFQ on the public board.
 
-**Check the balance before creating a request**, or makers waste bids on a trade that can never settle.
 
 ---
 
@@ -530,9 +555,11 @@ The user's requests. See [Listing a user's requests](#listing-a-users-requests).
 
 | Param | Description |
 |---|---|
+| `open` | `true` returns only what the user can still act on: `pending` or `bidding`, and not past `expiryTime`. Ignored when `status` is given. |
+| `status` | Comma-separated request statuses, e.g. `bidding` or `filled,expired`. Literal, not expiry-guarded. An unknown value returns `400`. |
 | `chainId` | Scope to one chain. |
 | `timeRange` | `all_time` (default), `last_day`, `last_week`, `last_month`, `last_year`. |
-| `fullAuctionEnabled` | `true` restricts to auction-flow requests. |
+| `fullAuctionEnabled` | `true` restricts to auction-flow requests. Omit for everything. |
 | `page` / `limit` | Default `1` / `20`. |
 
 Includes requests where the address is the owner **or** the winning market maker.
