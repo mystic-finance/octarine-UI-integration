@@ -2,6 +2,8 @@
 
 A minimal app that creates auctions and accepts bids on them. Mirrors the [Integration Guide](../README.md): create request → market makers bid → accept → settle → record.
 
+Live at **[demo.octarine.finance](https://demo.octarine.finance/)**.
+
 ## Run
 
 ```bash
