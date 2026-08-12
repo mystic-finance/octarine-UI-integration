@@ -34,8 +34,9 @@ export function api(base = BASE) {
     // status + top 3 bids with their txns
     swapStatus: (id) => call('GET', `/swap/${id}`),
 
-    // requests this wallet placed, with the best live bid on each
-    myAuctions: (address, query) => call('GET', `/orders/${address}`, { query }),
+    // this wallet's requests, human-scaled, with the best live bid embedded.
+    // add open=true for only what's still actionable, or status='filled,expired'.
+    myOrders: (address, query) => call('GET', `/orders/${address}`, { query }),
 
     // instant bids: send bid.txns yourself, then report the hash here
     recordFill: (body) => call('POST', '/fill', { body }),

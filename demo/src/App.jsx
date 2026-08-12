@@ -297,19 +297,18 @@ function Picker({ list, value, onChange, exclude }) {
   );
 }
 
+
 function MyAuctions({ oct, account, chainId, reload }) {
   const [rows, setRows] = useState([]);
-  const [busyRow, setBusyRow] = useState('');
-  const [step, setStep] = useState('');
   const [now, setNow] = useState(Date.now());
+  const [openRow, setOpenRow] = useState(null);
 
   const load = useCallback(async () => {
     if (!account) return setRows([]);
     try {
-      // open=true keeps this to what the user can still act on: pending or
-      // bidding, and not past expiry. Drop it for the full history, the row
-      // state logic below already handles filled and expired rows.
-      const r = await oct.myAuctions(account, { chainId, limit: 10, open: true });
+      // No status filter, so this is the full history. Add open=true for only
+      // the rows the user can still act on, or status='filled,expired' etc.
+      const r = await oct.myOrders(account, { chainId, limit: 10 });
       setRows(r.data.transactions.data);
     } catch (e) {
       alert(e.message);
@@ -329,48 +328,6 @@ function MyAuctions({ oct, account, chainId, reload }) {
       clearInterval(poll);
     };
   }, [load]);
-
-  async function accept(row) {
-    setBusyRow(row.requestId);
-    setStep('Loading bid');
-    try {
-      // Always re-read here. The execute txn carries a nonce that moves when
-      // any other order settles, so anything we cached earlier is likely stale.
-      const { bids } = await oct.swapStatus(row.requestId);
-      const bid = bids?.[0];
-      if (!bid) throw new Error('No bids on this auction yet.');
-      if (!bid.txns?.length) throw new Error('Settlement busy, try again in a few seconds.');
-
-      // row.chainId, not the chain the app happens to be showing
-      const txHash = await executeBid(bid, row.chainId, account, setStep);
-
-      if (bid.settlementType === 'delayed') {
-        // txns was the approval only. This locks the bid and Octarine fills it
-        // once the maker funds.
-        setStep('Accepting');
-        const { data } = await oct.acceptDelayed(row.requestId, bid.bidId);
-        alert(`Accepted.\n\nSettles by ${new Date(data.scheduleSettlementTime).toLocaleString()}.`);
-      } else {
-        if (!txHash) throw new Error('No fill transaction was sent.');
-        setStep('Recording fill');
-        await oct.recordFill({
-          requestId: row.requestId,
-          bidId: bid.bidId,
-          txHash,
-          filledAmount: bid.takerAmount,
-          marketMaker: bid.marketMaker,
-        });
-        alert(`Filled.\n\n${txHash}`);
-      }
-
-      load();
-    } catch (e) {
-      alert(e.message);
-    } finally {
-      setBusyRow('');
-      setStep('');
-    }
-  }
 
   return (
     <section className="card">
@@ -401,7 +358,7 @@ function MyAuctions({ oct, account, chainId, reload }) {
           {rows.map((row) => {
             // txHash beats status, which lags a poll cycle after a fill.
             // After that go by the clock: the expiry sweep lags too, and an
-            // Accept on a closed window just reverts.
+            // accept on a closed window just reverts.
             const filled = !!row.txHash || row.status === 'filled';
             const left = Math.max(0, Math.floor((row.expiryTime || 0) - now / 1000));
             const state = filled ? 'accepted' : left <= 0 ? 'expired' : 'live';
@@ -417,7 +374,7 @@ function MyAuctions({ oct, account, chainId, reload }) {
                     ? <strong className="bid">{n(bidAmt)} {row.buyToken.symbol}</strong>
                     : state === 'live' ? <span className="muted">No bids yet</span> : '—'}
                 </td>
-                <td className={left > 0 && left < 3600 ? 'urgent' : ''}>
+                <td className={state === 'live' && left < 3600 ? 'urgent' : ''}>
                   {state === 'live' ? countdown(left) : '—'}
                 </td>
                 <td><span className={`pill ${state}`}>{state}</span></td>
@@ -425,10 +382,10 @@ function MyAuctions({ oct, account, chainId, reload }) {
                   {state === 'live' && (
                     <button
                       className="primary sm"
-                      disabled={!!busyRow || !row.bid}
-                      onClick={() => accept(row)}
+                      disabled={!row.bid}
+                      onClick={() => setOpenRow(row)}
                     >
-                      {busyRow === row.requestId ? step : 'Accept'}
+                      See bids
                     </button>
                   )}
                 </td>
@@ -437,6 +394,155 @@ function MyAuctions({ oct, account, chainId, reload }) {
           })}
         </tbody>
       </table>
+
+      {openRow && (
+        <BidsModal
+          oct={oct}
+          account={account}
+          row={openRow}
+          onClose={() => setOpenRow(null)}
+          onDone={() => {
+            setOpenRow(null);
+            load();
+          }}
+        />
+      )}
     </section>
+  );
+}
+
+function settlementLabel(bid) {
+  if (bid.settlementType !== 'delayed') return 'Instant';
+  const hours = Math.round((bid.estimatedSettlementTime || 0) / 3600);
+  if (!hours) return 'Delayed';
+  return hours >= 24 ? `Delayed ~${Math.round(hours / 24)}d` : `Delayed ~${hours}h`;
+}
+
+function BidsModal({ oct, account, row, onClose, onDone }) {
+  const [bids, setBids] = useState(null); // null while loading
+  const [busyBid, setBusyBid] = useState('');
+  const [step, setStep] = useState('');
+
+  const load = useCallback(async () => {
+    try {
+      const { bids } = await oct.swapStatus(row.requestId);
+      setBids(bids || []);
+    } catch (e) {
+      alert(e.message);
+      setBids([]);
+    }
+  }, [oct, row.requestId]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  async function accept(bid) {
+    setBusyBid(bid.bidId);
+    setStep('Loading bid');
+    try {
+      // Re-read even though we just listed them. The execute txn carries a
+      // nonce that moves when any other order settles, so the calldata we
+      // rendered a minute ago is probably stale by now.
+      const fresh = await oct.swapStatus(row.requestId);
+      const match = (fresh.bids || []).find((b) => b.bidId === bid.bidId);
+      if (!match) throw new Error('That bid is gone. Refreshing the list.');
+      if (!match.txns?.length) throw new Error('Settlement busy, try again in a few seconds.');
+
+      // row.chainId, not the chain the app happens to be showing
+      const txHash = await executeBid(match, row.chainId, account, setStep);
+
+      if (match.settlementType === 'delayed') {
+        // txns was the approval only. This locks the bid and Octarine fills it
+        // once the maker funds.
+        setStep('Accepting');
+        const { data } = await oct.acceptDelayed(row.requestId, match.bidId);
+        alert(`Accepted.\n\nSettles by ${new Date(data.scheduleSettlementTime).toLocaleString()}.`);
+      } else {
+        if (!txHash) throw new Error('No fill transaction was sent.');
+        setStep('Recording fill');
+        await oct.recordFill({
+          requestId: row.requestId,
+          bidId: match.bidId,
+          txHash,
+          filledAmount: match.takerAmount,
+          marketMaker: match.marketMaker,
+        });
+        alert(`Filled.\n\n${txHash}`);
+      }
+
+      onDone();
+    } catch (e) {
+      alert(e.message);
+      load();
+    } finally {
+      setBusyBid('');
+      setStep('');
+    }
+  }
+
+  return (
+    <div className="backdrop" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <div className="head">
+          <h2>Bids</h2>
+          <button className="ghost" onClick={onClose}>Close</button>
+        </div>
+
+        <p className="sub">
+          Selling {n(row.sellToken.amount)} {row.sellToken.symbol} for {row.buyToken.symbol}.
+          Top 3 shown, best first.
+        </p>
+
+        {bids === null && <p className="hint">Loading...</p>}
+        {bids?.length === 0 && <p className="hint">No bids on this auction yet.</p>}
+
+        {bids?.length > 0 && (
+          <table>
+            <thead>
+              <tr>
+                <th>Market maker</th>
+                <th>You receive</th>
+                <th>Settlement</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {bids.map((bid) => {
+                const decimals = bid.metadata?.redemptionAssetData?.decimals;
+                return (
+                  <tr key={bid.bidId}>
+                    <td title={bid.marketMaker}>
+                      {bid.marketMakerName || short(bid.marketMaker)}
+                      {bid.trustScore != null && (
+                        <div className="muted">Trust score: {bid.trustScore}/100</div>
+                      )}
+                    </td>
+                    <td>
+                      <strong className="bid">
+                        {n(fmt(bid.makerAmount, decimals))} {row.buyToken.symbol}
+                      </strong>
+                      {bid.networkCostUSD != null && (
+                        <div className="muted">gas ~${bid.networkCostUSD}</div>
+                      )}
+                    </td>
+                    <td>{settlementLabel(bid)}</td>
+                    <td className="right">
+                      <button
+                        className="primary sm"
+                        disabled={!!busyBid}
+                        onClick={() => accept(bid)}
+                      >
+                        {busyBid === bid.bidId ? step : 'Accept bid'}
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
   );
 }

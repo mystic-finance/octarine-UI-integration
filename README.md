@@ -429,26 +429,6 @@ For anything more specific, `status` takes a comma-separated list of request sta
 
 Two things to know about `status`: it **overrides `open`** when both are sent, and unlike `open` it is **not expiry-guarded** — a row still marked `bidding` in the database shows up even if its window has closed, because hiding the user's own order would make it look like it never existed. An unrecognised value is a `400` listing the valid ones, rather than an empty list you'd have to debug.
 
-### Deriving row state
-
-Needed for a full-history view, where rows in any status come back. (With `open=true` the server has already done this for you.)
-
-`status` lags reality in both directions, so apply these in order:
-
-```js
-// 1. A txHash wins over everything — status can still read `pending` for a
-//    poll cycle after the fill landed.
-const filled = !!row.txHash || row.status === 'filled';
-
-// 2. Then the wall clock decides expiry, not `status`. The expiry sweep runs
-//    on a schedule, and an accept on a closed window just reverts.
-const secondsLeft = Math.max(0, Math.floor(row.expiryTime - Date.now() / 1000));
-
-const state = filled ? 'accepted' : secondsLeft <= 0 ? 'expired' : 'live';
-```
-
-Only `live` rows can be accepted. Between your transaction confirming and `/orders` reflecting it there is a gap, so it's worth recording accepted `requestId`s locally to stop a user accepting twice.
-
 ---
 
 ## Pitfalls
