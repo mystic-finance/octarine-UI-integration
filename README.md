@@ -1,6 +1,6 @@
 # Octarine
 
-Octarine is an RFQ and auction venue for tokenised real-world assets and other instruments with no liquid pool to trade against. You publish an *intent* — "sell 10,000 uMINT for USDC" — market makers bid on it, and you accept the bid you want. Settlement is on-chain and non-custodial.
+Octarine is an RFQ and auction venue for tokenised real-world assets and other instruments with no liquid pool to trade against. You publish an *intent* — "sell 10,000 uMINT for USDC" — bidders bid on it, and you accept the bid you want. Settlement is on-chain and non-custodial.
 
 | | |
 |---|---|
@@ -36,7 +36,7 @@ Octarine is an RFQ and auction venue for tokenised real-world assets and other i
 ```
   1. CREATE            2. BID              3. ACCEPT            4. SETTLE
   ┌──────────┐      ┌──────────────┐    ┌──────────────┐    ┌──────────────┐
-  │ Post an  │      │ Market makers│    │ Pick the bid │    │ Swap settles │
+  │ Post an  │      │   Bidders    │    │ Pick the bid │    │ Swap settles │
   │ intent to│─────▶│ price it and │───▶│ you want     │───▶│ on-chain     │
   │ sell X   │      │ sign an offer│    │              │    │              │
   └──────────┘      └──────────────┘    └──────────────┘    └──────────────┘
@@ -44,7 +44,7 @@ Octarine is an RFQ and auction venue for tokenised real-world assets and other i
    → requestId                           → bids[]            bid's settlementType
 ```
 
-A **request** is the user's intent, keyed by `requestId` (a UUID). A **bid** is a market maker's signed offer against it, keyed by `bidId`. Accepting a bid hands you either ready-to-sign calldata or a single API call, depending on the bid's settlement type. Funds never leave the user's wallet until the swap executes.
+A **request** is the user's intent, keyed by `requestId` (a UUID). A **bid** is a bidder's signed offer against it, keyed by `bidId`. Accepting a bid hands you either ready-to-sign calldata or a single API call, depending on the bid's settlement type. Funds never leave the user's wallet until the swap executes.
 
 ---
 
@@ -58,7 +58,7 @@ Both come from `POST /octarine/swap`. `fullAuctionEnabled` is the only differenc
 | Typical `expiry` | Minutes as you expect an answer now | Hours or days as you're waiting for price discovery |
 | Use for | Pairs with resting liquidity | Illiquid assets, large size, anything needing price discovery |
 
-**Both instant and full auctions produce the same record**, and makers bid on both the same way. `fullAuctionEnabled` is a discoverability tag  used to filter instant and full auctions; the endpoint returns everything when the filter is omitted. The real difference is the `expiry` you choose, and that is a single decision made at creation time.
+**Both instant and full auctions produce the same record**, and bidders bid on both the same way. `fullAuctionEnabled` is a discoverability tag  used to filter instant and full auctions; the endpoint returns everything when the filter is omitted. The real difference is the `expiry` you choose, and that is a single decision made at creation time.
 
 An empty `bids` array is not an error and not a dead end. The request stays live and biddable until `expiryTime`, so you can **keep polling the same `requestId`** to get updates on the request.
 
@@ -130,7 +130,7 @@ const { data } = await (await fetch(`${BASE}/price/estimate?${q}`)).json();
 }
 ```
 
-An **oracle estimate**, not a tradeable quote, no maker has committed to it. It creates nothing, so it's safe to call on every keystroke.
+An **oracle estimate**, not a tradeable quote, no bidder has committed to it. It creates nothing, so it's safe to call on every keystroke.
 
 ### 3. Create the request
 
@@ -167,7 +167,7 @@ const request = await res.json();
 }
 ```
 
-> **This is a write.** Every call publishes a live RFQ that makers can bid on.
+> **This is a write.** Every call publishes a live RFQ that bidders can bid on.
 
 Keep `requestId`. It is the handle for everything downstream.
 
@@ -273,11 +273,11 @@ Every bid carries `settlementType`, and it is the **only** correct discriminator
 
 |  | **`settlementType: "instant"`** | **`settlementType: "delayed"`** |
 |---|---|---|
-| What the maker is saying | "I have the funds now" | "I'll settle within a window" |
+| What the bidder is saying | "I have the funds now" | "I'll settle within a window" |
 | `estimatedSettlementTime` | `60` (a nominal one-minute pad) | The real window, **in seconds** (e.g. `86400` = 24h) |
 | How you accept | Send `bid.txns` | Send `bid.txns`, then `POST /swap/:requestId/accept-delayed` |
 | `bid.txns` holds | approval + execute | approval only, pre-authorising the later pull |
-| Then | `POST /fill` with the tx hash | Nothing because Octarine settles it when the maker funds |
+| Then | `POST /fill` with the tx hash | Nothing because Octarine settles it when the bidder funds |
 | Request status after | `filled` | `solving`, then `filled` on settlement |
 
 > **Do not check on whether `txns` is present.** Both kinds carry `txns`, they just contain different steps. Check the `settlementType`, always.
@@ -331,7 +331,7 @@ Then `POST /fill`.
 
 ### Accepting a delayed bid
 
-First send `bid.txns` — for a delayed bid that's normally the approval alone. It pre-authorises the pull so the maker can settle later without another signature from the user.
+First send `bid.txns` — for a delayed bid that's normally the approval alone. It pre-authorises the pull so the bidder can settle later without another signature from the user.
 
 Then accept. No `POST /fill`, since there's no fill hash yet.
 
@@ -358,7 +358,7 @@ Show `scheduleSettlementTime` as the settlement deadline. Poll `GET /swap/:reque
 | Request is not `pending`, `bidding` or `ready_for_solve` | Already accepted, expired, or settling. Reload. |
 | Bid is not `settlementType: "delayed"` | You branched wrong — use the `txns` flow. |
 | Bid is no longer `pending` | Cancelled, expired, or accepted elsewhere. Re-read the bids. |
-| Bid's signature expires before the settlement deadline | The maker's offer can't cover its own window. Pick another bid. |
+| Bid's signature expires before the settlement deadline | The bidder's offer can't cover its own window. Pick another bid. |
 
 ---
 
@@ -444,7 +444,7 @@ All routes prefixed `/octarine`.
 
 ### `POST /swap`
 
-Create a request. Blocks up to ~3s so an already-standing maker can answer inline.
+Create a request. Blocks up to ~3s so an already-standing bidder can answer inline.
 
 | Field | Type | Required | Description |
 |---|---|---|---|
@@ -497,7 +497,7 @@ Status plus the top 3 bids. The only source of executable calldata.
 | `price` | number | Decimal-adjusted maker-per-taker rate. |
 | `slippage` | number | Percent vs the oracle price. Negative is better than oracle. |
 | `networkCostUSD` | number | Estimated gas cost of settling. |
-| `trustScore` | number | The maker's reputation, when available. |
+| `trustScore` | number | The bidder's reputation, when available. |
 | `fee` | number | Protocol fee, raw sell-token units. |
 | `expiry` | integer | Unix seconds. Unfillable past this. |
 | `metadata` | object | `redeemAssetData` / `redemptionAssetData` with `symbol` and `decimals`. |
@@ -534,7 +534,7 @@ The user's requests. See [Listing a user's requests](#listing-a-users-requests).
 | `fullAuctionEnabled` | `true` restricts to auction-flow requests. Omit for everything. |
 | `page` / `limit` | Default `1` / `20`. |
 
-Includes requests where the address is the owner **or** the winning market maker.
+Includes requests where the address is the owner **or** the winning bidder.
 
 ### `GET /requests`
 
