@@ -36,17 +36,23 @@ export async function signerOn(chainId) {
   return provider.getSigner();
 }
 
-// Throws if the wallet is on a different chain than the token: balanceOf
-// against an address with no contract on it doesn't fail cleanly, it comes
-// back as empty data and ethers raises BAD_DATA.
-export async function readBalance(tokenAddress, owner, expectedChainId) {
-  if (!window.ethereum) return null;
-  const provider = new ethers.BrowserProvider(window.ethereum);
+// Read-only RPC per chain, so balances don't depend on which network the
+// wallet happens to be on. Add an entry when you add a chain.
+const RPC = {
+  11155111: 'https://ethereum-sepolia-rpc.publicnode.com',
+};
 
-  const live = Number((await provider.getNetwork()).chainId);
-  if (expectedChainId != null && live !== expectedChainId) {
-    throw new Error(`Wallet is on chain ${live}, expected ${expectedChainId}`);
-  }
+// Reads the balance on `chainId` itself, not on the wallet's current network.
+// Reading through the wallet meant the number vanished whenever the two
+// disagreed, since balanceOf against an address with no contract on it comes
+// back as empty data and ethers raises BAD_DATA.
+export async function readBalance(tokenAddress, owner, chainId) {
+  const url = RPC[chainId];
+  const provider = url
+    ? new ethers.JsonRpcProvider(url, chainId)
+    : window.ethereum && new ethers.BrowserProvider(window.ethereum);
+  if (!provider) return null;
+
   return new ethers.Contract(tokenAddress, BALANCE_ABI, provider).balanceOf(owner);
 }
 

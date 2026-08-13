@@ -113,6 +113,19 @@ export default function InstantSwap({ oct, account, chainId, tokens, redemptionT
     }
   }
 
+  // Poll the request we already created. Calling swap() again here would
+  // publish a second RFQ for the same intent and leave the first one live.
+  async function keepWaiting() {
+    setPhase('waiting');
+    const bids = await pollForBids(oct, requestId);
+    if (!bids.length) {
+      setPhase('empty');
+      return;
+    }
+    setBid(bids[0]);
+    setPhase('ready');
+  }
+
   async function accept() {
     setPhase('accepting');
     try {
@@ -212,15 +225,15 @@ export default function InstantSwap({ oct, account, chainId, tokens, redemptionT
           />
         )}
 
-        {phase === 'waiting' && (
+        {/* {phase === 'waiting' && (
           <p className="hint">
             Swap request is live for {EXPIRY_MINUTES} minutes. Waiting for a bidder to quote it...
           </p>
-        )}
+        )} */}
 
         {phase === 'empty' && (
           <p className="hint">
-            No bids yet. The request stays open for {EXPIRY_MINUTES} minutes, so you can keep
+            No bids yet. The auction is still open for {EXPIRY_MINUTES} minutes, so you can keep
             waiting, or create an auction to give bidders a longer window.
           </p>
         )}
@@ -235,7 +248,7 @@ export default function InstantSwap({ oct, account, chainId, tokens, redemptionT
           <button
             className="primary block"
             disabled={!account || !sell || !buy || !wei || over || busy}
-            onClick={swap}
+            onClick={phase === 'empty' ? keepWaiting : swap}
           >
             {phase === 'empty' ? 'Keep waiting' : label}
           </button>
