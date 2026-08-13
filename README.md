@@ -1,6 +1,6 @@
 # Octarine
 
-Octarine is an RFQ and auction venue for tokenised real-world assets and other instruments with no liquid pool to trade against. You publish an *intent* — "sell 10,000 uMINT for USDC" — bidders bid on it, and you accept the bid you want. Settlement is on-chain and non-custodial.
+Octarine is an RFQ and auction venue for tokenised real-world assets and other instruments with no liquid pool to trade against. You publish an *request*, "sell 10,000 uMINT for USDC", bidders bid on it, and you accept the bid you want. Settlement is on-chain and atomic.
 
 | | |
 |---|---|
@@ -49,47 +49,6 @@ In practice, a **request** is the user's intent, keyed by `requestId` (a UUID). 
 
 ---
 
-## Request types
-
-Both come from `POST /octarine/swap`. `fullAuctionEnabled` is the only difference in the body, and it is narrower than it looks.
-
-| | **Instant** | **Auction** |
-|---|---|---|
-| Body | `fullAuctionEnabled` omitted or `false` | `fullAuctionEnabled: true` |
-| Typical `expiry` | Minutes as you expect an answer now | Hours or days as you're waiting for price discovery |
-| Use for | Pairs with resting liquidity | Illiquid assets, large size, anything needing price discovery |
-
-**Both instant and full auctions produce the same record**, and bidders bid on both the same way. `fullAuctionEnabled` is a discoverability tag  used to filter instant and full auctions; the endpoint returns everything when the filter is omitted. The real difference is the `expiry` you choose, and that is a single decision made at creation time.
-
-An empty `bids` array is not an error and not a dead end. The request stays live and biddable until `expiryTime`, so you can **keep polling the same `requestId`** to get updates on the request.
-
----
-
-## Conventions
-
-**Amounts are integers in the token's smallest unit, as decimal strings.** `100 USDC` (6 decimals) is `"100000000"`, never `100`, never `"100.0"`. Get `decimals` from `GET /octarine/tokens`.
-
-**The naming is redemption-flavoured.** Requests and bids describe the same two tokens with different words:
-
-| Request field | Bid field | Meaning |
-|---|---|---|
-| `redeemAsset` | `takerToken` | The token being **sold** |
-| `redemptionAsset` | `makerToken` | The token being **bought** |
-| `amount` / `redeemAmount` | `takerAmount` | Sell size, base units |
-| — | `makerAmount` | What the maker offers, base units |
-
-**Timestamps are unix seconds** (`expiryTime`, `biddingCloseTime`, `bid.expiry`), except `createdAt`/`updatedAt` which are ISO 8601.
-
----
-
-Every example below uses production. Swap the base url for `staging-api.mysticfinance.xyz` to point the same calls at staging.
-
-```js
-const BASE = 'https://api.mysticfinance.xyz/octarine';
-```
-
----
-
 ## Authentication
 
 **The user flow needs no credentials.** Loading tokens, estimating a price, creating a request, reading bids, accepting, and recording a fill are all open.
@@ -98,24 +57,29 @@ const BASE = 'https://api.mysticfinance.xyz/octarine';
 
 ---
 
-## Quickstart
+## Quickstart (Steps to integrate Octarine into your UI)
 
-### 1. Load chains and tokens
+### 1. First we fetch the supported chains and supported tokens on a chain
 
 ```js
-const { data: chains } = await (await fetch(`${BASE}/chains`)).json();
+const BASE = 'https://staging-api.mysticfinance.xyz/octarine';
+```
+
+
+```js
+const { data: chains } = await (await fetch(`${BASE}/chains`)).json(); // fetch supported chains
 // [{ chainId: 98866, name: 'Plume Mainnet', exchangeProxy: '0x900b…', supported: true }, …]
 
 const tokens = await (await fetch(`${BASE}/tokens`)).json();
-const onChain = tokens.filter((t) => t.chainId === 98866);
+const onChain = tokens.filter((t) => t.chainId === 98866); // fetch supported chains on a chain
 // [{ chainId, address, symbol, name, decimals, logoURI }, …]
 ```
 
 
-### 2. Preview the price
+### 2. Next you preview the market price of the asset
 
 ```js
-const q = new URLSearchParams({ chainId: 98866, redeemAsset: SELL, redemptionAsset: BUY, amount: '100000000' });
+const q = new URLSearchParams({ chainId: 98866, redeemAsset: "0x....", redemptionAsset: "0x...", amount: '100000000' });
 const { data } = await (await fetch(`${BASE}/price/estimate?${q}`)).json();
 ```
 
@@ -130,10 +94,9 @@ const { data } = await (await fetch(`${BASE}/price/estimate?${q}`)).json();
   "redemptionAssetInfo": { "decimals": 6, "priceUSD": 1 }
 }
 ```
+This is an **oracle estimate**, not a tradeable quote, no bidder has committed to it.
 
-An **oracle estimate**, not a tradeable quote, no bidder has committed to it. It creates nothing, so it's safe to call on every keystroke.
-
-### 3. Create the request
+### 3. Create the swap request
 
 ```js
 const res = await fetch(`${BASE}/swap`, {
@@ -145,8 +108,8 @@ const res = await fetch(`${BASE}/swap`, {
     redeemAsset: SELL,
     redemptionAsset: BUY,
     amount: '100000000',
-    expiry: 1440,              // minutes
-    slippageTolerance: 10,     // percent
+    expiry: 1440,              // in minutes
+    slippageTolerance: 10,     // in percent
     swapType: 'direct',
     fullAuctionEnabled: true,
   }),
@@ -168,11 +131,9 @@ const request = await res.json();
 }
 ```
 
-> **This is a write.** Every call publishes a live RFQ that bidders can bid on.
+Note: Keep `requestId`. It is the handle for everything downstream.
 
-Keep `requestId`. It is the handle for everything downstream.
-
-### 4. Read the bids
+### 4. Check for bids
 
 ```js
 const { status, bids, totalBuyAmount } = await (await fetch(`${BASE}/swap/${requestId}`)).json();
@@ -210,11 +171,11 @@ const { status, bids, totalBuyAmount } = await (await fetch(`${BASE}/swap/${requ
 }
 ```
 
-Bids come back **ranked best-first, top 3 only**.
+Bids always come back **ranked best-first, top 3 only**.
 
-#### Polling
+#### Polling 
 
-`bids: []` means nobody has bid *yet*. Poll the same `requestId`, the request accepts bids for its whole window, and nothing about it needs re-creating:
+Sometimes it takes a while to get bids an you need to keep checking for bids by polling. Empty bid object means nobody has bid *yet*. Keep polling to check for bids for that request. How long you poll is a UI decision, not a protocol one. A short `expiry` request usually wants a tight loop and a fallback; a long one wants no loop at all, persist the `requestId`, list it from `GET /orders/:address`, and re-check `GET /swap/:requestId` when the user opens it, or you can skip polling entirely and subscribe to [`new_bid`](#real-time-updates).
 
 ```js
 async function waitForBids(requestId, { attempts = 15, intervalMs = 1000 } = {}) {
@@ -227,15 +188,11 @@ async function waitForBids(requestId, { attempts = 15, intervalMs = 1000 } = {})
 }
 ```
 
-How long you poll is a UI decision, not a protocol one. A short `expiry` request usually wants a tight loop and a fallback; a long one wants no loop at all, persist the `requestId`, list it from `GET /orders/:address`, and re-read `GET /swap/:requestId` when the user opens it. Or skip polling entirely and subscribe to [`new_bid`](#real-time-updates).
+Bids can *disappear* between polls. Each bid carries its own `expiry`, and only bids that are still active and not expired are returned, so a bid you showed a minute ago may be gone, if not accepted fast.
 
-Bids also *disappear* between polls. Each carries its own `expiry`, and only bids that are still `pending` and unexpired are returned, so a bid you showed a minute ago may be gone, which is one more reason to re-read before accepting.
-
-**Read `settlementType` on every bid before you do anything with it.** It decides how the bid is accepted, and the two paths share no code. See the next section.
+**Read `settlementType` on every bid before you do anything with it.** It decides what happens after the bid is accepted. See the next section.
 
 ### 5. Accept
-
-Branch on `settlementType`:
 
 ```js
 if (bid.settlementType === 'delayed') {
@@ -246,54 +203,14 @@ if (bid.settlementType === 'delayed') {
 }
 ```
 
-### 6. Record the fill (instant only)
+#### Accepting an instant bid
 
-```js
-await fetch(`${BASE}/fill`, {
-  method: 'POST',
-  headers: { 'content-type': 'application/json' },
-  body: JSON.stringify({
-    requestId,
-    bidId: bid.bidId,
-    txHash,
-    filledAmount: bid.takerAmount,
-    marketMaker: bid.marketMaker,
-  }),
-});
-```
-
-The swap already happened on-chain; this closes the loop. Octarine verifies the hash against the receipt and its fill event before flipping the request to `filled`, so a spoofed hash records nothing.
-
-**Retry it.** It's idempotent, the backend guards on the bid's status, so a repeat can't double-count.
-
----
-
-## Instant vs delayed settlement
-
-Every bid carries `settlementType`, and it is the **only** correct discriminator. Both kinds may arrive on the same request, in the same `bids` array, ranked together.
-
-|  | **`settlementType: "instant"`** | **`settlementType: "delayed"`** |
-|---|---|---|
-| What the bidder is saying | "I have the funds now" | "I'll settle within a window" |
-| `estimatedSettlementTime` | `60` (a nominal one-minute pad) | The real window, **in seconds** (e.g. `86400` = 24h) |
-| How you accept | Send `bid.txns` | Send `bid.txns`, then `POST /swap/:requestId/accept-delayed` |
-| `bid.txns` holds | approval + execute | approval only, pre-authorising the later pull |
-| Then | `POST /fill` with the tx hash | Nothing because Octarine settles it when the bidder funds |
-| Request status after | `filled` | `solving`, then `filled` on settlement |
-
-> **Do not check on whether `txns` is present.** Both kinds carry `txns`, they just contain different steps. Check the `settlementType`, always.
-
-### Accepting an instant bid
-
-Send each entry in `bid.txns` in order. The array is normally `[approval, execute]`; the hash of the **last** one is the fill hash.
+Call each entry in `bid.txns` in order. The array is normally `[approval, execute]`; the hash of the **last** one is the fill hash.
 
 ```js
 import { ethers } from 'ethers';
 
 async function executeBid(bid, chainId, owner) {
-  // The wallet's live network drifts from your app's selected chain, and the
-  // calldata was built for ONE chain. Switch, then re-verify — BrowserProvider
-  // caches the network it saw at construction, so rebuild it after switching.
   let provider = new ethers.BrowserProvider(window.ethereum);
   await provider.send('eth_requestAccounts', []);
   if (Number((await provider.getNetwork()).chainId) !== chainId) {
@@ -311,9 +228,6 @@ async function executeBid(bid, chainId, owner) {
   let hash = '';
   for (const tx of bid.txns) {
     if (tx.type === 'approval') {
-      // Skip an approval already covered. Re-prompting is bad UX, and some
-      // tokens revert on a non-zero → non-zero allowance change, which breaks
-      // every retry after a cancelled attempt.
       const iface = new ethers.Interface(['function approve(address,uint256)']);
       const [spender, needed] = iface.decodeFunctionData('approve', tx.data);
       const erc20 = new ethers.Contract(
@@ -328,13 +242,10 @@ async function executeBid(bid, chainId, owner) {
 }
 ```
 
-Then `POST /fill`.
+#### Accepting a delayed bid
 
-### Accepting a delayed bid
+First call `bid.txns`, for a delayed bid it's usually the approval alone. It pre-authorises the pull so the bidder can settle later without another transaction from the user.
 
-First send `bid.txns` — for a delayed bid that's normally the approval alone. It pre-authorises the pull so the bidder can settle later without another signature from the user.
-
-Then accept. No `POST /fill`, since there's no fill hash yet.
 
 ```js
 const res = await fetch(`${BASE}/swap/${requestId}/accept-delayed`, {
@@ -346,11 +257,11 @@ const { data } = await res.json();
 // { requestId, status: 'solving', scheduleSettlementTime: '2026-08-13T16:27:40.669Z' }
 ```
 
-This closes the auction and locks the bid: the request moves to `solving`, the bid to `accepted`, every other bid is out.
+This closes the auction and locks the bid and the request moves to `solving`, the chosen bid moves to `accepted`, every other bid is out.
 
-**Settling later:** Octarine polls the **maker's** wallet each minute for the `makerAmount` they owe. Once it's covered, the swap executes against that pre-signed approval and the request flips to `filled` — no user action. If the maker never funds by `scheduleSettlementTime`, the request and bid are cancelled and a fresh short auction opens automatically for the same trade.
+**Settling later:** Octarine polls the **maker's** wallet each minute for the amount of assets they owe. Once it's covered, the swap executes against that pre-signed approval and the request is filled. If the maker never funds by deadline, the request and bid are cancelled and a fresh short auction opens automatically for the same trade.
 
-Show `scheduleSettlementTime` as the settlement deadline. Poll `GET /swap/:requestId` or listen for `settlement_completed`.
+The `scheduleSettlementTime` is the settlement deadline, which you can show in the UI for better user experience
 
 **Rejections**, all `400` with the reason in `message`:
 
@@ -363,79 +274,72 @@ Show `scheduleSettlementTime` as the settlement deadline. Poll `GET /swap/:reque
 
 ---
 
-## Listing a user's requests
 
-`GET /orders/:address` returns every request a wallet placed, newest first, the data behind an "my orders" view.
+### 6. Record the fill (instant only)
 
-```js
-const q = new URLSearchParams({ chainId, page: 1, limit: 10, timeRange: 'all_time' });
-const { data } = await (await fetch(`${BASE}/orders/${userAddress}?${q}`)).json();
-```
-
-```json
-{
-  "summary": { "totalVolume": "1.0657", "totalTrades": 11, "uniqueTokensTraded": 10 },
-  "transactions": {
-    "data": [
-      {
-        "requestId": "1291798b-b0ef-4000-bd0d-9538dced24b8",
-        "date": "2026-07-14T14:40:00.011Z",
-        "type": "swap",
-        "sellToken": { "address": "0x1111…e94b", "symbol": "NBASIS", "amount": 0.08 },
-        "buyToken":  { "address": "0xdddd…6f3f", "symbol": "PUSD",   "amount": 0 },
-        "txHash": null,
-        "chainId": 98866,
-        "status": "expired",
-        "expiryTime": 1784039842,
-        "bid": null
-      }
-    ],
-    "page": 1, "limit": 10, "totalItems": 20, "totalPages": 10
-  }
-}
-```
-
-Two things make this the right endpoint for a history view:
-
-- **`amount` is already human-scaled** — a float, not base units. The only endpoint that does the decimal maths for you.
-- **`bid`** carries the best active bid inline on every non-filled row, so a table can show a live number without a fetch per row. `null` when there are none.
-
-Add `fullAuctionEnabled=true` to narrow it to full auction flow requests only; omit it and you get everything the wallet placed. Filtering and pagination are server-side, don't fetch `limit=200` and filter in the client.
-
-### Only the ones the user can act on
-
-For a queue view — "here's what's waiting on you" rather than a full history — pass `open=true`:
+This is only needed to be called if the user accepts an instant bid.
 
 ```js
-const q = new URLSearchParams({ user: userAddress, chainId, open: true, limit: 10 });
-const { data } = await (await fetch(`${BASE}/orders/${userAddress}?${q}`)).json();
+await fetch(`${BASE}/fill`, {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({
+    requestId,
+    bidId: bid.bidId,
+    txHash,
+    filledAmount: bid.takerAmount,
+    marketMaker: bid.marketMaker,
+  }),
+});
 ```
 
-That's shorthand for *pending or bidding, and not past `expiryTime`*. Filled, cancelled and expired rows never come back, so every row you get has an Accept button on it and you can skip the state derivation below entirely.
+After the swap already happened on-chain; this closes the loop. Octarine verifies the hash against the receipt and its fill event before closing the swap request as filled.
 
-For anything more specific, `status` takes a comma-separated list of request statuses:
+If it fails, you can retry it because it's idempotent, so a repeat can't double-count.
 
-| Want | Send |
-|---|---|
-| Still actionable | `open=true` |
-| Bids have landed | `status=bidding` |
-| Closed out | `status=filled,cancelled,expired` |
-| Everything | *neither* |
+---
 
-Two things to know about `status`: it **overrides `open`** when both are sent, and unlike `open` it is **not expiry-guarded** — a row still marked `bidding` in the database shows up even if its window has closed, because hiding the user's own order would make it look like it never existed. An unrecognised value is a `400` listing the valid ones, rather than an empty list you'd have to debug.
+## Instant vs delayed settlement
+
+Every bid carries `settlementType`, which are either `instant` or `delayed`. Instant settlement type means the trade get settled immediately the user accepts the bid, while delayed settlment type means the user still wait a bit of time for settlment to happen after bid has been accepted. Check the difference below:
+
+|  | **`settlementType: "instant"`** | **`settlementType: "delayed"`** |
+|---|---|---|
+| What the bidder is saying | "I have the funds now" | "I'll settle within a window" |
+| `estimatedSettlementTime` | `60` (around one minute) | The real window, set by bidder (e.g. 24h) |
+| How you accept | Send `bid.txns` | Send `bid.txns`, then `POST /swap/:requestId/accept-delayed` |
+| `bid.txns` holds | approval + execute | approval only, pre-authorising the later pull |
+| Then | `POST /fill` with the tx hash | Nothing because Octarine settles it when the bidder funds |
+| Request status after | `filled` | `solving`, then `filled` on settlement |
+
+---
+
+## Conventions
+
+**Amounts are integers in the token's smallest unit, as decimal strings.** `100 USDC` (6 decimals) is `"100000000"`, never `100`, never `"100.0"`. Get `decimals` from `GET /octarine/tokens`.
+
+**The naming is redemption-flavoured.** Requests and bids describe the same two tokens with different words:
+
+| Request field | Bid field | Meaning |
+|---|---|---|
+| `redeemAsset` | `takerToken` | The token being **sold** |
+| `redemptionAsset` | `makerToken` | The token being **bought** |
+| `amount` / `redeemAmount` | `takerAmount` | Sell size, base units |
+| — | `makerAmount` | What the maker offers, base units |
+
+**Timestamps are unix seconds** (`expiryTime`, `biddingCloseTime`, `bid.expiry`), except `createdAt`/`updatedAt` which are ISO 8601.
 
 ---
 
 ## Pitfalls
 
-**Never cache `txns`.** The `execute` transaction bundles a nonce that advances whenever any other order on that chain settles. Calldata fetched when a screen opened can be stale by the time the user clicks accept, and it fails *after* they've already paid for the approval. Re-fetch `GET /swap/:requestId` inside the click handler, match on `bidId`, send that.
+**Never cache `txns`.** The `execute` transaction bundles a nonce that advances whenever any other order on that chain settles. Calldata fetched when a screen opened can be stale by the time the user clicks accept, and it fails *after* they've already paid for the approval. Always re-fetch `GET /swap/:requestId` inside the click handler.
 
-**Empty `txns` is transient.** Tell the user to retry in a few seconds; don't mark the bid dead.
+**Empty `txns` is transient.** wait for a few seconds and check again.
 
 **Settle on the request's chain**, never the wallet's current network. A request created on Ethereum must settle on Ethereum even if the user has since switched.
 
 **`fee` is in raw sell-token units and `takerAmount` is already net of it**, so the rate is `fee / (takerAmount + fee)`.
-
 
 ---
 
@@ -556,7 +460,7 @@ Returns `{ data, page, limit, totalItems, totalPages }`. Rows carry `bidCount` a
 
 ### `GET /request/:requestId`
 
-One request record — the same row shape `GET /requests` returns.
+One request record, the same row shape `GET /requests` returns.
 
 ### `GET /price/estimate`
 
@@ -576,6 +480,25 @@ USD prices keyed by **lowercased** address. A token with no resolvable price is 
 
 ---
 
+## Supported chains
+
+From `GET /octarine/chains`. `exchangeProxy` is the settlement contract on that chain.
+
+| Chain | chainId | exchangeProxy |
+|---|---|---|
+| Plume Mainnet | `98866` | `0x900b0e037EEA342f1bEd61f239b4f4FBe839C57D` |
+| Ethereum Mainnet | `1` | `0xF30fFE4E387ee7B814fA0bb093d53dcC253C63Bc` |
+| Monad Mainnet | `143` | `0x1bE89a7Fc6d343272E2D1A7d91638455B8Ff767d` |
+| Berachain Mainnet | `80094` | `0x438b8E1b3Dd96FaF3755Fc5f90eB8b1F5b95a97F` |
+| Citrea Mainnet | `4114` | `0x441346b778C7e448817C7184ed7f6F3F486114E9` |
+| Flare | `14` | `0x1f0Bd889A1d9BFeD8D908C1adBB7C45827F9218E` |
+| Pharos Atlantic | `688689` | `0x9b1EE35691cC0d071F3E99a3a706dfc46667cf77` |
+| Sepolia | `11155111` | `0xE067A9905fD0d5760F747329DBd6CA175a6677f2` |
+
+Some assets are **permissioned**: the issuer gates transfers behind a whitelist, and `POST /swap` fails with an explanatory `message` when the wallet isn't on it.
+
+---
+
 ## Real-time updates
 
 A Socket.IO gateway on the `/octarine` namespace replaces most polling.
@@ -583,7 +506,7 @@ A Socket.IO gateway on the `/octarine` namespace replaces most polling.
 ```js
 import { io } from 'socket.io-client';
 
-const socket = io('https://api.mysticfinance.xyz/octarine', { transports: ['websocket'] });
+const socket = io('https://staging-api.mysticfinance.xyz/octarine', { transports: ['websocket'] });
 
 socket.emit('subscribe_request', { requestId });        // one request
 socket.emit('subscribe_rfqs', { chainIds: [98866] });   // the whole board
@@ -608,46 +531,8 @@ socket.on('settlement_completed', ({ data }) => markDone(data));
 | `solving_started` | Settlement begins. |
 | `settlement_completed` | The swap is done. |
 
-An accelerator, not a source of truth — the payload has no fresh `txns`, so still re-read `GET /swap/:requestId` before executing.
-
 ---
 
-## Supported chains
-
-From `GET /octarine/chains`. `exchangeProxy` is the settlement contract on that chain.
-
-| Chain | chainId | exchangeProxy |
-|---|---|---|
-| Plume Mainnet | `98866` | `0x900b0e037EEA342f1bEd61f239b4f4FBe839C57D` |
-| Ethereum Mainnet | `1` | `0xF30fFE4E387ee7B814fA0bb093d53dcC253C63Bc` |
-| Monad Mainnet | `143` | `0x1bE89a7Fc6d343272E2D1A7d91638455B8Ff767d` |
-| Berachain Mainnet | `80094` | `0x438b8E1b3Dd96FaF3755Fc5f90eB8b1F5b95a97F` |
-| Citrea Mainnet | `4114` | `0x441346b778C7e448817C7184ed7f6F3F486114E9` |
-| Flare | `14` | `0x1f0Bd889A1d9BFeD8D908C1adBB7C45827F9218E` |
-| Pharos Atlantic | `688689` | `0x9b1EE35691cC0d071F3E99a3a706dfc46667cf77` |
-| Sepolia | `11155111` | `0xE067A9905fD0d5760F747329DBd6CA175a6677f2` |
-
-Read this from the API rather than hardcoding — chains are added without a client release. An unsupported `chainId` returns `400`.
-
-Some assets are **permissioned**: the issuer gates transfers behind a whitelist, and `POST /swap` fails with an explanatory `message` when the wallet isn't on it. Show that message verbatim.
-
----
-
-## Fees
-
-A protocol fee is taken in the **buy token** and collected on-chain to `feeRecipient` at settlement. It's already reflected in the numbers you display:
-
-- `request.fee` (and `bid.fee`, the same value) is the fee in raw sell-token units.
-- `bid.takerAmount` is the sell amount **net of** it.
-- So the rate is `fee / (takerAmount + fee)` — a gross denominator.
-
-```js
-const feePct = (Number(bid.fee) / (Number(bid.takerAmount) + Number(bid.fee))) * 100;
-```
-
-Rates vary by asset and chain, so read `fee` off the response rather than hardcoding.
-
----
 
 ## Errors
 

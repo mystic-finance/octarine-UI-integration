@@ -46,12 +46,10 @@ export default function BidDetails({ bid, buySymbol, sellSymbol }) {
         <Row
           label="Total slippage"
           value={`${total.toFixed(2)}%`}
-          note={`${(Number(bid.slippage) || 0).toFixed(2)}% price + ${fee.toFixed(2)}% fee`}
         />
         <Row
           label="Bidder"
           value={bid.marketMakerName || short(bid.marketMaker)}
-          note={bid.trustScore != null ? `Trust score ${bid.trustScore}/100` : undefined}
         />
         {bid.networkCostUSD != null && (
           <Row label="Network cost" value={bid.networkCostUSD < 0.01 ? '<$0.01' : `$${bid.networkCostUSD}`} />
