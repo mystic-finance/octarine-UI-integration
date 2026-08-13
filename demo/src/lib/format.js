@@ -32,12 +32,6 @@ export function settlementTime(bid) {
   return hours >= 24 ? `~${Math.round(hours / 24)} days` : `~${hours} hours`;
 }
 
-// How long this offer stands. Past bid.expiry it can't be accepted at all.
-export function durationCovered(bid, nowMs = Date.now()) {
-  if (!bid.expiry) return '—';
-  return countdown(Math.max(0, Math.floor(bid.expiry - nowMs / 1000)));
-}
-
 // The protocol fee as a percentage of the GROSS sell amount. `takerAmount` is
 // already net of the fee, so the denominator has to add it back.
 export function feePct(bid) {
@@ -52,4 +46,9 @@ export function feePct(bid) {
 // spread (bid.slippage, already a percent) plus the protocol fee.
 export function totalSlippagePct(bid) {
   return (Number(bid.slippage) || 0) + feePct(bid);
+}
+
+// Same fee expressed in basis points, which is how fees are quoted.
+export function feeBps(bid) {
+  return Math.round(feePct(bid) * 100);
 }

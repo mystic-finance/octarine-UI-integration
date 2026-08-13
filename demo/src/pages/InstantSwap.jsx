@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { ethers } from 'ethers';
 import { pollForBids } from '../api';
 import { acceptBid } from '../lib/acceptBid';
-import { fmt, n } from '../lib/format';
+import { fmt, n, short } from '../lib/format';
 import AssetField from '../components/AssetField';
 import BidDetails from '../components/BidDetails';
 
@@ -20,7 +20,29 @@ const SLIPPAGE = 10;
  * The request stays live for EXPIRY_MINUTES either way, so "no bids yet" is
  * never fatal: the user can keep waiting, or create an auction instead.
  */
-export default function InstantSwap({ oct, account, chainId, tokens }) {
+function TxHash({ hash }) {
+  const [copied, setCopied] = useState(false);
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(hash);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // Clipboard needs a secure context and permission; the title attribute
+      // below still lets the user select the full hash by hand.
+    }
+  }
+
+  return (
+    <div className="txhash" title={hash}>
+      <span className="mono">{short(hash)}</span>
+      <button className="ghost" onClick={copy}>{copied ? 'Copied' : 'Copy'}</button>
+    </div>
+  );
+}
+
+export default function InstantSwap({ oct, account, chainId, tokens, redemptionTimes }) {
   const [phase, setPhase] = useState('idle');
   const [sell, setSell] = useState(null);
   const [buy, setBuy] = useState(null);
@@ -122,7 +144,7 @@ export default function InstantSwap({ oct, account, chainId, tokens }) {
               ? `Accepted. Settles by ${new Date(result.settlesBy).toLocaleString()}.`
               : 'Your swap settled on-chain.'}
           </p>
-          {result.txHash && <p className="mono">{result.txHash}</p>}
+          {result.txHash && <TxHash hash={result.txHash} />}
           <button className="primary block" onClick={reset}>Close</button>
         </section>
       </div>
@@ -181,7 +203,14 @@ export default function InstantSwap({ oct, account, chainId, tokens }) {
 
         {/* Stays up through 'accepting' so the numbers the user agreed to are
             still on screen while they confirm in the wallet. */}
-        {bid && <BidDetails bid={bid} buySymbol={buy?.symbol} sellSymbol={sell?.symbol} />}
+        {bid && (
+          <BidDetails
+            bid={bid}
+            buySymbol={buy?.symbol}
+            sellSymbol={sell?.symbol}
+            redemptionTime={redemptionTimes[sell?.address?.toLowerCase()]}
+          />
+        )}
 
         {phase === 'waiting' && (
           <p className="hint">

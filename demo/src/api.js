@@ -27,6 +27,10 @@ export function api(base = BASE) {
     chains: () => call('GET', '/chains').then((r) => r.data),
     tokens: () => call('GET', '/tokens'),
 
+    // `T+N` settlement window per token, keyed by lowercased address.
+    // Chains with no registry entry return {}.
+    redemptionTimes: (chainId) => call('GET', '/tokens/redemption-times', { query: { chainId } }),
+
     // oracle price, doesn't create anything
     estimate: (query) => call('GET', '/price/estimate', { query }).then((r) => r.data),
 

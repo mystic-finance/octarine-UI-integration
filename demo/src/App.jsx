@@ -16,6 +16,7 @@ export default function App() {
   const [chainId, setChainId] = useState(DEFAULT_CHAIN);
   const [chains, setChains] = useState([]);
   const [tokens, setTokens] = useState([]);
+  const [redemptionTimes, setRedemptionTimes] = useState({});
   const [loadError, setLoadError] = useState('');
 
   const oct = useMemo(() => api(), []);
@@ -33,6 +34,18 @@ export default function App() {
   }, [oct]);
 
   useEffect(loadReference, [loadReference]);
+
+  // `T+N` per asset. Chain-scoped, so refetch when the chain changes.
+  useEffect(() => {
+    let dead = false;
+    oct
+      .redemptionTimes(chainId)
+      .then((r) => !dead && setRedemptionTimes(r || {}))
+      .catch(() => !dead && setRedemptionTimes({}));
+    return () => {
+      dead = true;
+    };
+  }, [oct, chainId]);
 
   // Follow the wallet. Without this the selector keeps pointing at the old
   // chain after the user switches in MetaMask, and anything reading on-chain
@@ -62,7 +75,7 @@ export default function App() {
     }
   }
 
-  const shared = { oct, account, chainId, tokens };
+  const shared = { oct, account, chainId, tokens, redemptionTimes };
 
   return (
     <div className="app">
