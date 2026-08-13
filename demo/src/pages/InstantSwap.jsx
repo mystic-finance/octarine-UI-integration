@@ -140,6 +140,13 @@ export default function InstantSwap({ oct, account, chainId, tokens }) {
 
   return (
     <div className="center-page">
+      <p className="faucet">
+        Need test tokens?{' '}
+        <a href="https://staging.octarine.finance/faucet" target="_blank" rel="noreferrer">
+          Get them from this faucet
+        </a>
+      </p>
+
       <section className="card narrow">
         <h2>Swap</h2>
 

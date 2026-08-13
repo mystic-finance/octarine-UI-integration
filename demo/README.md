@@ -49,7 +49,8 @@ plus `fullAuctionEnabled: true`. Accepting a bid is the same code either way.
 
 ## Notes
 
-- Points at **production** (`https://api.mysticfinance.xyz`). Change `BASE` in `src/api.js` to `https://staging-api.mysticfinance.xyz` to run against staging.
+- Points at **staging** (`https://staging-api.mysticfinance.xyz`). Change `BASE` in `src/api.js` to `https://api.mysticfinance.xyz` for production.
+- Restricted to **Sepolia**. `ALLOWED_CHAINS` in `src/App.jsx` is the allowlist — widen it, or drop the filter, to offer every chain `GET /chains` returns.
 - No credentials anywhere — every endpoint the demo touches is open. See [Authentication](../README.md#authentication).
 - My auctions shows the full history. Add `open: true` to the `myOrders` call in `MyAuctions.jsx` for only the rows still worth acting on.
 - If the chain selector and your wallet disagree, `signerOn` switches the wallet before signing. That is deliberate — see [Executing a bid](../README.md#4-execute-the-bid).

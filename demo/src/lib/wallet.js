@@ -36,9 +36,17 @@ export async function signerOn(chainId) {
   return provider.getSigner();
 }
 
-export async function readBalance(tokenAddress, owner) {
+// Throws if the wallet is on a different chain than the token: balanceOf
+// against an address with no contract on it doesn't fail cleanly, it comes
+// back as empty data and ethers raises BAD_DATA.
+export async function readBalance(tokenAddress, owner, expectedChainId) {
   if (!window.ethereum) return null;
   const provider = new ethers.BrowserProvider(window.ethereum);
+
+  const live = Number((await provider.getNetwork()).chainId);
+  if (expectedChainId != null && live !== expectedChainId) {
+    throw new Error(`Wallet is on chain ${live}, expected ${expectedChainId}`);
+  }
   return new ethers.Contract(tokenAddress, BALANCE_ABI, provider).balanceOf(owner);
 }
 

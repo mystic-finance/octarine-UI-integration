@@ -6,9 +6,14 @@ import { short } from './lib/format';
 import InstantSwap from './pages/InstantSwap';
 import Auctions from './pages/Auctions';
 
+// The demo runs on Sepolia only. Widen this list, or drop the filter below,
+// to offer everything GET /chains returns.
+const ALLOWED_CHAINS = [11155111];
+const DEFAULT_CHAIN = 11155111;
+
 export default function App() {
   const [account, setAccount] = useState('');
-  const [chainId, setChainId] = useState(98866); // Plume mainnet
+  const [chainId, setChainId] = useState(DEFAULT_CHAIN);
   const [chains, setChains] = useState([]);
   const [tokens, setTokens] = useState([]);
   const [loadError, setLoadError] = useState('');
@@ -19,7 +24,7 @@ export default function App() {
     setLoadError('');
     Promise.all([oct.chains(), oct.tokens()])
       .then(([c, t]) => {
-        setChains(c);
+        setChains(c.filter((x) => ALLOWED_CHAINS.includes(x.chainId)));
         setTokens(t);
       })
       // Inline, not an alert. A blocking popup on first paint is a poor
@@ -29,11 +34,29 @@ export default function App() {
 
   useEffect(loadReference, [loadReference]);
 
+  // Follow the wallet. Without this the selector keeps pointing at the old
+  // chain after the user switches in MetaMask, and anything reading on-chain
+  // (balances) stays stuck against a network the tokens don't exist on.
+  useEffect(() => {
+    if (!window.ethereum) return;
+    const onChain = (hex) => {
+      const id = Number(BigInt(hex));
+      if (ALLOWED_CHAINS.includes(id)) setChainId(id);
+    };
+    const onAccounts = (accounts) => setAccount(accounts[0] || '');
+    window.ethereum.on('chainChanged', onChain);
+    window.ethereum.on('accountsChanged', onAccounts);
+    return () => {
+      window.ethereum.removeListener('chainChanged', onChain);
+      window.ethereum.removeListener('accountsChanged', onAccounts);
+    };
+  }, []);
+
   async function connect() {
     try {
       const w = await connectWallet();
       setAccount(w.account);
-      setChainId(w.chainId);
+      if (ALLOWED_CHAINS.includes(w.chainId)) setChainId(w.chainId);
     } catch (e) {
       alert(e.message);
     }

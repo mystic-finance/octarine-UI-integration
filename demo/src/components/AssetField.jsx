@@ -26,16 +26,30 @@ export default function AssetField({
 }) {
   const [balance, setBalance] = useState(null);
 
-  // Reads off the wallet's current chain, so it's stale until the wallet
-  // switches to the one selected in the header.
   useEffect(() => {
-    if (!showBalance || !account || !token) return setBalance(null);
+    // Drop the old number straight away, it belongs to the previous token.
+    setBalance(null);
+    if (!showBalance || !account || !token) return;
+
     let dead = false;
-    readBalance(token.address, account)
-      .then((b) => !dead && setBalance(b))
-      .catch(() => !dead && setBalance(null));
+    let retry;
+
+    async function read() {
+      try {
+        const b = await readBalance(token.address, account, chainId);
+        if (!dead) setBalance(b);
+      } catch {
+        // Usually the wallet sitting on another chain, sometimes just an RPC
+        // blip. Either way it resolves itself, so keep trying rather than
+        // leaving the row looking like the user holds nothing.
+        if (!dead) retry = setTimeout(read, 4000);
+      }
+    }
+
+    read();
     return () => {
       dead = true;
+      clearTimeout(retry);
     };
   }, [showBalance, account, token, chainId]);
 

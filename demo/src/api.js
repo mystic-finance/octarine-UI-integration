@@ -1,6 +1,6 @@
 // Octarine API client. See ../../README.md for the endpoint docs.
 // No auth needed for any of this.
-const BASE = 'https://api.mysticfinance.xyz/octarine';
+const BASE = 'https://staging-api.mysticfinance.xyz/octarine';
 
 export function api(base = BASE) {
   async function call(method, path, { query, body } = {}) {
