@@ -1,4 +1,4 @@
-import { feeBps, fmt, n, settlementTime, short, totalSlippagePct } from '../lib/format';
+import { feeLabel, fmt, n, settlementTime, short, totalSlippagePct } from '../lib/format';
 
 /**
  * Everything worth knowing about one bid before accepting it.
@@ -23,12 +23,9 @@ export default function BidDetails({ bid, buySymbol, sellSymbol, redemptionTime 
       <dl className="rows">
         <Row label="Settlement time" value={settlementTime(bid)} />
         <Row label="Duration covered" value={redemptionTime || '—'} />
-        <Row
-          label="Redemption fee"
-          value={`${feeBps(bid)} bps`}
-        />
+        <Row label="Redemption fee" value={feeLabel(bid, redemptionTime)} />
         <Row label="Total slippage" value={`${total.toFixed(2)}%`} />
-        <Row label="Bidder" value={bid.marketMakerName || short(bid.marketMaker)} />
+        <Row label="Solver" value={bid.marketMakerName || short(bid.marketMaker)} />
         {bid.networkCostUSD != null && (
           <Row
             label="Network cost"

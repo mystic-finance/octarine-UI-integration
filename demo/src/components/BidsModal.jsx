@@ -69,7 +69,7 @@ export default function BidsModal({ oct, account, row, onClose, onDone }) {
           <table>
             <thead>
               <tr>
-                <th>Bidder</th>
+                <th>Solver</th>
                 <th>You receive</th>
                 <th>Settlement</th>
                 <th />

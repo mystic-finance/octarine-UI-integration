@@ -98,7 +98,7 @@ export default function InstantSwap({ oct, account, chainId, tokens, redemptionT
       setRequestId(request.requestId);
 
       // POST /swap already held the connection open for a moment, so a fast
-      // bidder is in the response. Poll the same requestId for the rest.
+      // solver is in the response. Poll the same requestId for the rest.
       const bids = request.bids?.length ? request.bids : await pollForBids(oct, request.requestId);
 
       if (!bids.length) {
@@ -227,7 +227,7 @@ export default function InstantSwap({ oct, account, chainId, tokens, redemptionT
 
         {/* {phase === 'waiting' && (
           <p className="hint">
-            Swap request is live for {EXPIRY_MINUTES} minutes. Waiting for a bidder to quote it...
+            Swap request is live for {EXPIRY_MINUTES} minutes. Waiting for a solver to quote it...
           </p>
         )} */}
 

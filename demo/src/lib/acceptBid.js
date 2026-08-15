@@ -22,7 +22,7 @@ export async function acceptBid({ oct, requestId, chainId, account, bidId, onSte
 
   if (bid.settlementType === 'delayed') {
     // txns was the approval only, so there is nothing to report as a fill.
-    // This call locks the bid; Octarine settles once the bidder funds.
+    // This call locks the bid; Octarine settles once the solver funds.
     onStep('Accepting');
     const { data } = await oct.acceptDelayed(requestId, bid.bidId);
     return { settlement: 'delayed', settlesBy: data.scheduleSettlementTime };

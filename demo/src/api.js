@@ -34,7 +34,7 @@ export function api(base = BASE) {
     // oracle price, doesn't create anything
     estimate: (query) => call('GET', '/price/estimate', { query }).then((r) => r.data),
 
-    // publishes a real RFQ that bidders can see
+    // publishes a real RFQ that solvers can see
     createSwap: (body) => call('POST', '/swap', { body }),
 
     // status + top 3 bids with their txns
@@ -52,7 +52,7 @@ export function api(base = BASE) {
   };
 }
 
-// Bids arrive whenever a bidder gets to it, so poll the same requestId.
+// Bids arrive whenever a solver gets to it, so poll the same requestId.
 // Resolves with [] if nothing lands in the window: that's a normal outcome,
 // not an error, and the request stays live either way.
 export async function pollForBids(oct, requestId, { attempts = 60, intervalMs = 1500, signal } = {}) {

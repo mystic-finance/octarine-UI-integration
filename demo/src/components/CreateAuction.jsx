@@ -118,7 +118,7 @@ export default function CreateAuction({ oct, account, chainId, tokens, onCreated
       </button>
 
       <p className="hint">
-        Bidders bid over the window you pick. Accept the one you want from My auctions.
+        Solvers bid over the window you pick. Accept the one you want from My auctions.
       </p>
     </section>
   );

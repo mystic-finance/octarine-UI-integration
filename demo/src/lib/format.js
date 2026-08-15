@@ -26,7 +26,7 @@ export function countdown(s) {
 // bid.estimatedSettlementTime is seconds: 60 for instant, the real window for delayed.
 export function settlementTime(bid) {
   const s = bid.estimatedSettlementTime || 0;
-  if (bid.settlementType !== 'delayed') return s > 90 ? `~${Math.round(s / 60)} min` : 'About a minute';
+  if (bid.settlementType !== 'delayed') return s > 90 ? `~${Math.round(s / 60)} minutes` : '~1 minute';
   const hours = Math.round(s / 3600);
   if (!hours) return 'Later today';
   return hours >= 24 ? `~${Math.round(hours / 24)} days` : `~${hours} hours`;
@@ -42,7 +42,7 @@ export function feePct(bid) {
   return gross > 0 ? (fee / gross) * 100 : 0;
 }
 
-// What the user actually gives up against the oracle price: the bidder's own
+// What the user actually gives up against the oracle price: the solver's own
 // spread (bid.slippage, already a percent) plus the protocol fee.
 export function totalSlippagePct(bid) {
   return (Number(bid.slippage) || 0) + feePct(bid);
@@ -51,4 +51,22 @@ export function totalSlippagePct(bid) {
 // Same fee expressed in basis points, which is how fees are quoted.
 export function feeBps(bid) {
   return Math.round(feePct(bid) * 100);
+}
+
+// "T+3" -> 3. Null when the asset has no registered window, or it settles
+// same-day (T+0), where a per-day rate has nothing to divide by.
+export function redemptionDays(redemptionTime) {
+  const m = /^T\+(\d+)/i.exec(String(redemptionTime || ''));
+  const days = m ? Number(m[1]) : 0;
+  return days > 0 ? days : null;
+}
+
+// The protocol fee is priced against the redemption window, so quote it per
+// day. Falls back to the flat figure when the window is unknown.
+export function feeLabel(bid, redemptionTime) {
+  const bps = feeBps(bid);
+  const days = redemptionDays(redemptionTime);
+  if (!days) return `${bps} bps`;
+  const perDay = bps / days;
+  return `${perDay < 1 ? perDay.toFixed(2) : Math.round(perDay * 100) / 100} bps / day`;
 }

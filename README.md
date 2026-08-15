@@ -362,6 +362,33 @@ Create a request. Blocks up to ~3s so an already-standing bidder can answer inli
 | `slippageTolerance` | number | — | Percent. Default `1`. |
 | `swapType` | string | — | `direct` (default — the user sends the fill) or `system` (bundled execution). |
 | `fullAuctionEnabled` | boolean | — | Marks it as an auction. Default `false`. |
+| `referral` | string | — | Address to credit with a commission on this trade. See below. |
+| `referralFeeBps` | integer | — | That commission, in bps of the settled notional. Capped at **100 bps** by default. |
+
+#### Referral fees
+
+If you're the distribution channel — your UI brought the user and the flow — you can charge for it. Pass an address you control as `referral` and the commission you want as `referralFeeBps`, and Octarine pays you out of the settlement automatically:
+
+```js
+await fetch(`${BASE}/swap`, {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({
+    chainId, walletAddress, redeemAsset, redemptionAsset, amount,
+    referral: '0xYourVenueWallet',
+    referralFeeBps: 25,            // 0.25% of the settled notional
+  }),
+});
+```
+
+Four things to be clear on:
+
+- **It is additive.** The commission comes out of the **user's payout**, not out of Octarine's cut. Your user receives less than they otherwise would, by exactly your bps. Show it to them.
+- **It is flat, not per-day.** A one-off percentage of the settled notional. The protocol's own fee scales with the `T+N` redemption window; a distribution commission does not.
+- **It is per request**, set at creation and fixed for that trade. There is no account to register and nothing to onboard — the address is the identity.
+- **It is capped**, at 100 bps (1%) by default. Above that the request is rejected at creation rather than at settlement, so you find out immediately.
+
+The fee is settled to `referral` in the same distribution that pays the protocol's fee recipients, so nothing extra is required from you. A `referralFeeBps` of `0` (or omitted) records no referral at all; sending `referralFeeBps` **without** a `referral` address is a `400`, rather than silently charging nobody.
 
 **Response**
 
