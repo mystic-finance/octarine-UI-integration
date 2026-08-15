@@ -66,7 +66,7 @@ export function redemptionDays(redemptionTime) {
 export function feeLabel(bid, redemptionTime) {
   const bps = feeBps(bid);
   const days = redemptionDays(redemptionTime);
-  if (!days) return `${bps} bps`;
+  if (!days) return `${bps} bps / day`;
   const perDay = bps / days;
   return `${perDay < 1 ? perDay.toFixed(2) : Math.round(perDay * 100) / 100} bps / day`;
 }
