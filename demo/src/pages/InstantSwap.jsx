@@ -233,8 +233,7 @@ export default function InstantSwap({ oct, account, chainId, tokens, redemptionT
 
         {phase === 'empty' && (
           <p className="hint">
-            No bids yet. The auction is still open for {EXPIRY_MINUTES} minutes, so you can keep
-            waiting, or create an auction to give bidders a longer window.
+            No bids yet. Keep waiting or create another auction.
           </p>
         )}
 
