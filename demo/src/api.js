@@ -55,7 +55,7 @@ export function api(base = BASE) {
 // Bids arrive whenever a bidder gets to it, so poll the same requestId.
 // Resolves with [] if nothing lands in the window: that's a normal outcome,
 // not an error, and the request stays live either way.
-export async function pollForBids(oct, requestId, { attempts = 20, intervalMs = 1500, signal } = {}) {
+export async function pollForBids(oct, requestId, { attempts = 60, intervalMs = 1500, signal } = {}) {
   for (let i = 0; i < attempts; i++) {
     if (signal?.aborted) return [];
     try {

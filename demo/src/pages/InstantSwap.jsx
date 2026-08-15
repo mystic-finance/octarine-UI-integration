@@ -166,7 +166,7 @@ export default function InstantSwap({ oct, account, chainId, tokens, redemptionT
 
   const busy = phase === 'waiting' || phase === 'accepting';
 
-  let label = 'Swap';
+  let label = 'INstant Redeem';
   if (!account) label = 'Connect wallet';
   else if (!sell || !buy) label = 'Select tokens';
   else if (!wei) label = 'Enter an amount';
