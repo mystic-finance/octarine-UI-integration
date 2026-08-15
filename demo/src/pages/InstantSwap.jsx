@@ -166,7 +166,7 @@ export default function InstantSwap({ oct, account, chainId, tokens, redemptionT
 
   const busy = phase === 'waiting' || phase === 'accepting';
 
-  let label = 'INstant Redeem';
+  let label = 'Instant Redeem';
   if (!account) label = 'Connect wallet';
   else if (!sell || !buy) label = 'Select tokens';
   else if (!wei) label = 'Enter an amount';
@@ -183,7 +183,7 @@ export default function InstantSwap({ oct, account, chainId, tokens, redemptionT
       </p>
 
       <section className="card narrow">
-        <h2>Swap</h2>
+        <h2>Instant Redeem</h2>
 
         <AssetField
           label="You sell"
