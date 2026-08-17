@@ -25,10 +25,13 @@ const SLIPPAGE = 10;
  */
 function TxHash({ hash, chainId }) {
   const [copied, setCopied] = useState(false);
+  const url = txUrl(chainId, hash);
 
   async function copy() {
     try {
-      await navigator.clipboard.writeText(hash);
+      // The explorer link, so pasting it somewhere is immediately useful.
+      // Falls back to the bare hash on a chain we have no explorer for.
+      await navigator.clipboard.writeText(url || hash);
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     } catch {
@@ -37,10 +40,8 @@ function TxHash({ hash, chainId }) {
     }
   }
 
-  const url = txUrl(chainId, hash);
-
   return (
-    <div className="txhash" title={hash}>
+    <div className="txhash" title={url || hash}>
       {url ? (
         <a className="mono" href={url} target="_blank" rel="noreferrer">{short(hash)}</a>
       ) : (
