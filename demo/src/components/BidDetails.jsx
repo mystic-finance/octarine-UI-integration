@@ -7,6 +7,7 @@ import {
   settlementTime,
   short,
   totalBps,
+  totalDiscountPct,
 } from '../lib/format';
 
 /**
@@ -31,7 +32,11 @@ export default function BidDetails({ bid, buySymbol, sellSymbol, redemptionTime 
         <Row label="Settlement time" value={settlementTime(bid)} />
         <Row label="Duration covered" value={window} />
         <Row label="Protocol fee" value={bpsPerDay(feeBps(bid), window)} />
-        <Row label="Total slippage" value={bpsPerDay(totalBps(bid), window)} />
+        <Row
+          label="Total slippage"
+          value={bpsPerDay(totalBps(bid), window)}
+          note={`${totalDiscountPct(bid).toFixed(2)}% discount`}
+        />
         <Row label="Solver" value={bid.marketMakerName || short(bid.marketMaker)} />
         {bid.networkCostUSD != null && (
           <Row

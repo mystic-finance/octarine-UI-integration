@@ -69,3 +69,9 @@ export function bpsPerDay(bps, redemptionTime) {
   const rounded = Math.abs(perDay) < 1 ? perDay.toFixed(2) : Math.round(perDay * 100) / 100;
   return `${rounded} bps / day`;
 }
+
+// The same total as a plain percentage of the trade. Not per day: this is the
+// whole discount the user takes across the redemption window.
+export function totalDiscountPct(bid) {
+  return totalBps(bid) / 100;
+}
