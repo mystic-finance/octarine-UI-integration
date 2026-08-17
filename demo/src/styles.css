@@ -272,3 +272,32 @@ td.urgent { color: var(--red); font-weight: 600; }
   background: var(--bg);
 }
 .txhash .mono { overflow: hidden; text-overflow: ellipsis; }
+
+.spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  margin-right: 8px;
+  vertical-align: -2px;
+  border: 2px solid rgba(255, 255, 255, .35);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin .7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.card.done { text-align: center; }
+.card.done .sub { margin-bottom: 16px; }
+.card.done .txhash { text-align: left; }
+
+.tick {
+  width: 54px;
+  height: 54px;
+  margin: 4px auto 12px;
+  display: block;
+  stroke: var(--green);
+}
+.tick circle { stroke: var(--green); opacity: .3; }
+
+.txhash a { color: var(--accent); text-decoration: none; }
+.txhash a:hover { text-decoration: underline; }

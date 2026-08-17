@@ -2,9 +2,12 @@ import { useEffect, useMemo, useState } from 'react';
 import { ethers } from 'ethers';
 import { pollForBids } from '../api';
 import { acceptBid } from '../lib/acceptBid';
+import { txUrl } from '../lib/wallet';
 import { fmt, n, short } from '../lib/format';
 import AssetField from '../components/AssetField';
 import BidDetails from '../components/BidDetails';
+import Spinner from '../components/Spinner';
+import SuccessMark from '../components/SuccessMark';
 
 // Short window: this flow expects an answer now, not price discovery.
 const EXPIRY_MINUTES = 10;
@@ -20,7 +23,7 @@ const SLIPPAGE = 10;
  * The request stays live for EXPIRY_MINUTES either way, so "no bids yet" is
  * never fatal: the user can keep waiting, or create an auction instead.
  */
-function TxHash({ hash }) {
+function TxHash({ hash, chainId }) {
   const [copied, setCopied] = useState(false);
 
   async function copy() {
@@ -34,9 +37,15 @@ function TxHash({ hash }) {
     }
   }
 
+  const url = txUrl(chainId, hash);
+
   return (
     <div className="txhash" title={hash}>
-      <span className="mono">{short(hash)}</span>
+      {url ? (
+        <a className="mono" href={url} target="_blank" rel="noreferrer">{short(hash)}</a>
+      ) : (
+        <span className="mono">{short(hash)}</span>
+      )}
       <button className="ghost" onClick={copy}>{copied ? 'Copied' : 'Copy'}</button>
     </div>
   );
@@ -150,14 +159,15 @@ export default function InstantSwap({ oct, account, chainId, tokens, redemptionT
   if (phase === 'done') {
     return (
       <div className="center-page">
-        <section className="card narrow">
-          <h2>Swap complete</h2>
+        <section className="card narrow done">
+          <SuccessMark />
+          <h2>Redemption processed</h2>
           <p className="sub">
             {result.settlement === 'delayed'
               ? `Accepted. Settles by ${new Date(result.settlesBy).toLocaleString()}.`
               : 'Your swap settled on-chain.'}
           </p>
-          {result.txHash && <TxHash hash={result.txHash} />}
+          {result.txHash && <TxHash hash={result.txHash} chainId={chainId} />}
           <button className="primary block" onClick={reset}>Close</button>
         </section>
       </div>
@@ -241,6 +251,7 @@ export default function InstantSwap({ oct, account, chainId, tokens, redemptionT
           // Same button through the whole accept: only the label changes, so
           // the bid details above never move.
           <button className="primary block" disabled={busy} onClick={accept}>
+            {phase === 'accepting' && <Spinner />}
             {phase === 'accepting' ? step || 'Working...' : 'Accept bid'}
           </button>
         ) : (
@@ -249,6 +260,7 @@ export default function InstantSwap({ oct, account, chainId, tokens, redemptionT
             disabled={!account || !sell || !buy || !wei || over || busy}
             onClick={phase === 'empty' ? keepWaiting : swap}
           >
+            {busy && <Spinner />}
             {phase === 'empty' ? 'Keep waiting' : label}
           </button>
         )}

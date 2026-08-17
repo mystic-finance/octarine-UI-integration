@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { acceptBid } from '../lib/acceptBid';
 import { fmt, n, settlementTime, short } from '../lib/format';
+import Spinner from './Spinner';
 
 // Every bid on one auction. GET /swap/:requestId is the only place bids come
 // with txns, so this is also what the accept runs against.
@@ -96,6 +97,7 @@ export default function BidsModal({ oct, account, row, onClose, onDone }) {
                   <td>{settlementTime(bid)}</td>
                   <td className="right">
                     <button className="primary sm" disabled={!!busyBid} onClick={() => accept(bid)}>
+                      {busyBid === bid.bidId && <Spinner />}
                       {busyBid === bid.bidId ? step || 'Working...' : 'Accept bid'}
                     </button>
                   </td>

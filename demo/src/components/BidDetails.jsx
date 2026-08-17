@@ -1,4 +1,13 @@
-import { feeLabel, fmt, n, settlementTime, short, totalSlippagePct } from '../lib/format';
+import {
+  DEFAULT_REDEMPTION_TIME,
+  bpsPerDay,
+  feeBps,
+  fmt,
+  n,
+  settlementTime,
+  short,
+  totalBps,
+} from '../lib/format';
 
 /**
  * Everything worth knowing about one bid before accepting it.
@@ -9,9 +18,7 @@ import { feeLabel, fmt, n, settlementTime, short, totalSlippagePct } from '../li
  */
 export default function BidDetails({ bid, buySymbol, sellSymbol, redemptionTime }) {
   const receive = fmt(bid.makerAmount, bid.metadata?.redemptionAssetData?.decimals);
-  const total = totalSlippagePct(bid);
-  // bid.fee is in raw SELL-token units, same as request.fee.
-  const feeAmount = fmt(bid.fee, bid.metadata?.redeemAssetData?.decimals);
+  const window = redemptionTime || DEFAULT_REDEMPTION_TIME;
 
   return (
     <div className="panel">
@@ -22,9 +29,9 @@ export default function BidDetails({ bid, buySymbol, sellSymbol, redemptionTime 
 
       <dl className="rows">
         <Row label="Settlement time" value={settlementTime(bid)} />
-        <Row label="Duration covered" value={redemptionTime || '—'} />
-        <Row label="Redemption fee" value={feeLabel(bid, redemptionTime)} />
-        <Row label="Total slippage" value={`${total.toFixed(2)}%`} />
+        <Row label="Duration covered" value={window} />
+        <Row label="Protocol fee" value={bpsPerDay(feeBps(bid), window)} />
+        <Row label="Total slippage" value={bpsPerDay(totalBps(bid), window)} />
         <Row label="Solver" value={bid.marketMakerName || short(bid.marketMaker)} />
         {bid.networkCostUSD != null && (
           <Row

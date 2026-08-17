@@ -42,6 +42,15 @@ const RPC = {
   11155111: 'https://ethereum-sepolia-rpc.publicnode.com',
 };
 
+const EXPLORER = {
+  11155111: 'https://sepolia.etherscan.io',
+};
+
+export function txUrl(chainId, hash) {
+  const base = EXPLORER[chainId];
+  return base && hash ? `${base}/tx/${hash}` : null;
+}
+
 // Reads the balance on `chainId` itself, not on the wallet's current network.
 // Reading through the wallet meant the number vanished whenever the two
 // disagreed, since balanceOf against an address with no contract on it comes

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { ethers } from 'ethers';
 import { fmt, n } from '../lib/format';
 import AssetField from './AssetField';
+import Spinner from './Spinner';
 
 const DURATIONS = [
   { minutes: 60, label: '1h' },
@@ -114,6 +115,7 @@ export default function CreateAuction({ oct, account, chainId, tokens, onCreated
         disabled={!account || !sell || !buy || !wei || over || !!busy}
         onClick={create}
       >
+        {!!busy && <Spinner />}
         {label}
       </button>
 
