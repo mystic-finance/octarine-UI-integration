@@ -166,7 +166,7 @@ export default function InstantSwap({ oct, account, chainId, tokens, redemptionT
           <p className="sub">
             {result.settlement === 'delayed'
               ? `Accepted. Settles by ${new Date(result.settlesBy).toLocaleString()}.`
-              : 'Your swap has settled on-chain.'}
+              : 'Your swap has settled on-chain. '}
           </p>
           {result.txHash && <TxHash hash={result.txHash} chainId={chainId} />}
           <button className="primary block" onClick={reset}>Close</button>
