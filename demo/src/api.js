@@ -1,5 +1,6 @@
 // Octarine API client. See ../../README.md for the endpoint docs.
-// No auth needed for any of this.
+// No API key needed for any of this: the user's request signature is what
+// authorises a trade, not a credential.
 const BASE = 'https://staging-api.mysticfinance.xyz/octarine';
 
 export function api(base = BASE) {
@@ -19,35 +20,65 @@ export function api(base = BASE) {
 
     const json = await res.json().catch(() => ({}));
     // the API puts the real reason in `message`, status alone isn't enough
-    if (!res.ok) throw new Error(json.message || `${path} -> ${res.status}`);
+    if (!res.ok) {
+      const err = new Error(json.message || `${path} -> ${res.status}`);
+      err.status = res.status;
+      throw err;
+    }
     return json;
   }
 
   return {
+    // [{ chainId, name, rfq, supported }]. `rfq` is the OctarineRFQ contract:
+    // the EIP-712 verifyingContract and the approval spender.
     chains: () => call('GET', '/chains').then((r) => r.data),
-    tokens: () => call('GET', '/tokens'),
 
-    // `T+N` settlement window per token, keyed by lowercased address.
-    // Chains with no registry entry return {}.
-    redemptionTimes: (chainId) => call('GET', '/tokens/redemption-times', { query: { chainId } }),
+    // [{ chainId, address, symbol, name, decimals, logoURI, isStable }].
+    // Which of these the RFQ will buy, and their redemption schedules, is read
+    // from the contract itself: see readSchedules in lib/wallet.js.
+    tokens: () => call('GET', '/tokens'),
 
     // oracle price, doesn't create anything
     estimate: (query) => call('GET', '/price/estimate', { query }).then((r) => r.data),
 
-    // publishes a real RFQ that solvers can see
+    // Creates the request and returns the terms to sign:
+    //   { requestId, typedData, requestHash, signatureRequired, feeBps, feeRecipient, request, bids }
+    // Optional body fields: minReceivedAmount (base units) and takerMaxBpsPerDay
+    // (human bps/day). Leave them out and the server derives both from
+    // slippageTolerance and the asset's horizon.
     createSwap: (body) => call('POST', '/swap', { body }),
 
-    // status + top 3 bids with their txns
+    // The user's EIP-712 signature over typedData. Until this lands the request
+    // can collect bids but nothing can settle.
+    submitRequestSignature: (requestId, signature) =>
+      call('POST', '/swap/signature', { body: { requestId, signature } }),
+
+    // status + top bids, each with the txns that fill it. Ranked lowest rate first.
     swapStatus: (id) => call('GET', `/swap/${id}`),
 
     // this wallet's requests, human-scaled, with the best live bid embedded.
     // add open=true for only what's still actionable, or status='filled,expired'.
+    // Rows are a summary: the signed terms (salt, rfqOrder, signatureRequired,
+    // requestHash) are only on GET /request/:id below.
     myOrders: (address, query) => call('GET', `/orders/${address}`, { query }),
 
-    // instant bids: send bid.txns yourself, then report the hash here
+    // One request in full: status plus the signed terms, never the signature.
+    //   { requestId, status, expiryTime, salt, requestHash, signatureRequired,
+    //     rfqContract, rfqOrder, metadata: { rfqOrder, … }, … }
+    // A request from before the OctarineRFQ switch has no requestHash.
+    request: (id) => call('GET', `/request/${id}`),
+
+    // Report an instant fill. The server re-reads RFQOrderFilled from the
+    // receipt, so the amounts sent here are a cross-check, not the record.
     recordFill: (body) => call('POST', '/fill', { body }),
 
-    // delayed bids: send the approval, then this. no fill to report yet.
+    // Closes the request off-chain and returns { cancelTx: { to, data } }, the
+    // cancelSalt(user, salt) call that voids the signature on-chain. Origin
+    // allowlisted; when it refuses, build cancelSalt yourself (cancelRequest
+    // in lib/wallet.js does).
+    cancelRequest: (id) => call('DELETE', `/request/${id}`),
+    // Locks in the delayed bid the user picked. Octarine then fills it with
+    // the stored request signature once the bidder funds.
     acceptDelayed: (id, bidId) => call('POST', `/swap/${id}/accept-delayed`, { body: { bidId } }),
   };
 }

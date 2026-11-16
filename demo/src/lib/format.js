@@ -1,4 +1,5 @@
 import { ethers } from 'ethers';
+import { toRfqError } from './wallet';
 
 // Base units -> number. Never throws, a bad value just reads as 0.
 export function fmt(raw, decimals = 18) {
@@ -23,6 +24,9 @@ export function countdown(s) {
   return `${Math.floor(s / 60)}m ${s % 60}s`;
 }
 
+// Unix seconds -> local date/time.
+export const when = (unix) => (unix ? new Date(Number(unix) * 1000).toLocaleString() : '—');
+
 // bid.estimatedSettlementTime is seconds: 60 for instant, the real window for delayed.
 export function settlementTime(bid) {
   const s = bid.estimatedSettlementTime || 0;
@@ -32,46 +36,83 @@ export function settlementTime(bid) {
   return hours >= 24 ? `~${Math.round(hours / 24)} days` : `~${hours} hours`;
 }
 
-// Assets with no registered window are quoted as next-day.
-export const DEFAULT_REDEMPTION_TIME = 'T+1';
+// --- rates -----------------------------------------------------------------
+//
+// A bid is a RATE, not an amount: makerBpsPerDay, charged over the seconds
+// until the asset redeems. The API speaks human bps/day (2.5); the contract
+// stores it x100 (250). The payout is computed on-chain at fill:
+//
+//   makerAmount = gross * (D - rate * horizonSeconds) / D,  D = 10_000 * 100 * 86_400
+//   fee         = makerAmount * feeBps / 10_000
+//   received    = makerAmount - fee        (never below the signed minimum)
 
-// "T+3" -> 3. Everything is priced against this window, so an unparseable or
-// same-day value falls back to 1 rather than 0: it is the divisor below.
-export function redemptionDays(redemptionTime) {
-  const m = /^T\+(\d+)/i.exec(String(redemptionTime || DEFAULT_REDEMPTION_TIME));
-  const days = m ? Number(m[1]) : 1;
-  return days > 0 ? days : 1;
+export const BPS_PER_DAY_SCALE = 100;
+export const DAY = 86_400;
+export const DISCOUNT_DENOMINATOR = 10_000n * 100n * 86_400n;
+
+export const toContractRate = (human) => Math.round(Number(human) * BPS_PER_DAY_SCALE);
+export const toHumanRate = (contract) => Number(contract) / BPS_PER_DAY_SCALE;
+
+// 2.5 -> "2.5 bps/day"
+export function rate(bpsPerDay) {
+  const x = Number(bpsPerDay);
+  if (!Number.isFinite(x)) return '—';
+  return `${Math.round(x * 100) / 100} bps/day`;
 }
 
-// The protocol fee in bps of the GROSS sell amount. `takerAmount` is already
-// net of the fee, so the denominator has to add it back.
-export function feeBps(bid) {
-  const fee = Number(bid.fee);
-  const taker = Number(bid.takerAmount);
-  if (!Number.isFinite(fee) || !Number.isFinite(taker) || fee <= 0) return 0;
-  const gross = taker + fee;
-  return gross > 0 ? Math.round((fee / gross) * 10_000) : 0;
+// Seconds to redemption -> "30d", "14d 6h", "5h 20m", "12m".
+export function horizon(seconds) {
+  const s = Math.max(0, Math.floor(Number(seconds) || 0));
+  if (!s) return '—';
+  const d = Math.floor(s / DAY);
+  const h = Math.floor((s % DAY) / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  if (d) return h ? `${d}d ${h}h` : `${d}d`;
+  if (h) return m ? `${h}h ${m}m` : `${h}h`;
+  return `${Math.max(1, m)}m`;
 }
 
-// The solver's own spread against the oracle price. bid.slippage is a percent.
-export function slippageBps(bid) {
-  return Math.round((Number(bid.slippage) || 0) * 100);
+// Total discount a rate takes over a horizon, in bps: 2.5 bps/day over 30d = 75.
+export function discountBps(bpsPerDay, horizonSeconds) {
+  return (Number(bpsPerDay) * Number(horizonSeconds)) / DAY;
 }
 
-// Everything the user gives up: the solver's spread plus the protocol fee.
-export function totalBps(bid) {
-  return slippageBps(bid) + feeBps(bid);
+export const pct = (bps) => `${(Number(bps) / 100).toFixed(2)}%`;
+
+/**
+ * What the user receives for `gross` (the oracle value of what they sell, in
+ * the stable's base units) at a human rate over a horizon, after the fee.
+ * BigInt all the way, same rounding as the contract.
+ */
+export function expectedReceived(gross, bpsPerDay, horizonSeconds, feeBps) {
+  const discount = BigInt(toContractRate(bpsPerDay)) * BigInt(Math.max(1, Math.floor(horizonSeconds)));
+  if (discount >= DISCOUNT_DENOMINATOR) return { makerAmount: 0n, fee: 0n, received: 0n };
+  const makerAmount = (BigInt(gross) * (DISCOUNT_DENOMINATOR - discount)) / DISCOUNT_DENOMINATOR;
+  const fee = (makerAmount * BigInt(feeBps || 0)) / 10_000n;
+  return { makerAmount, fee, received: makerAmount - fee };
 }
 
-// Costs are quoted per day, because they price a T+N redemption window.
-export function bpsPerDay(bps, redemptionTime) {
-  const perDay = bps / redemptionDays(redemptionTime);
-  const rounded = Math.abs(perDay) < 1 ? perDay.toFixed(2) : Math.round(perDay * 100) / 100;
-  return `${rounded} bps / day`;
+/**
+ * The signed floor for a fill of `takerAmountIn` out of `takerAmount`. The
+ * contract enforces minReceivedAmount pro-rata and rounds up.
+ */
+export function minReceived(minReceivedAmount, takerAmountIn, takerAmount) {
+  const total = BigInt(takerAmount || 0);
+  if (!total) return BigInt(minReceivedAmount || 0);
+  const x = BigInt(minReceivedAmount || 0) * BigInt(takerAmountIn ?? takerAmount);
+  return (x + total - 1n) / total;
 }
 
-// The same total as a plain percentage of the trade. Not per day: this is the
-// whole discount the user takes across the redemption window.
-export function totalDiscountPct(bid) {
-  return totalBps(bid) / 100;
+/**
+ * A starting point for the user's own floor: the oracle value less a maximum
+ * rate over the horizon, less the fee. Mirrors how the backend derives
+ * minReceivedAmount when you don't send one.
+ */
+export function suggestedMinimum(gross, maxBpsPerDay, horizonSeconds, feeBps) {
+  return expectedReceived(gross, maxBpsPerDay, horizonSeconds, feeBps).received;
+}
+
+// Any error -> one line for the user. RFQ reverts come back named.
+export function parseRfqError(e) {
+  return toRfqError(e).message;
 }

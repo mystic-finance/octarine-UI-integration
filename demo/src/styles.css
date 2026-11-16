@@ -301,3 +301,19 @@ td.urgent { color: var(--red); font-weight: 600; }
 
 .txhash a { color: var(--accent); text-decoration: none; }
 .txhash a:hover { text-decoration: underline; }
+
+/* RFQ states and secondary actions */
+.ghost.block { width: 100%; margin-top: 8px; padding: 10px; }
+.hint.warn { color: var(--red); }
+.pill.awaiting { background: #e0e7ff; color: #3730a3; }
+.pill.settling { background: #fef3c7; color: var(--amber); }
+.pill.cancelled { background: #f3f4f6; color: var(--muted); }
+.actions { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
+.terms { margin-top: 14px; }
+
+/* migration page */
+.card.wide { max-width: 720px; }
+.card h3 { font-size: 14px; margin: 22px 0 4px; }
+.card .sub a, .card p a { color: var(--accent); font-weight: 600; }
+.banner.info { background: #e0e7ff; color: #3730a3; }
+.banner.info .ghost { text-decoration: none; }

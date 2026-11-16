@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ethers } from 'ethers';
 import { pollForBids } from '../api';
 import { acceptBid } from '../lib/acceptBid';
-import { txUrl } from '../lib/wallet';
-import { fmt, n, short } from '../lib/format';
+import { cancelRequest, quoteBid, signRequest, txUrl } from '../lib/wallet';
+import { fmt, horizon, n, parseRfqError, rate, short } from '../lib/format';
 import AssetField from '../components/AssetField';
 import BidDetails from '../components/BidDetails';
 import Spinner from '../components/Spinner';
@@ -11,17 +11,36 @@ import SuccessMark from '../components/SuccessMark';
 
 // Short window: this flow expects an answer now, not price discovery.
 const EXPIRY_MINUTES = 10;
+// Sets the signed terms when we don't send our own: the server turns it into
+// the maximum rate (bps/day over the horizon) and the minimum payout.
 const SLIPPAGE = 10;
+// Bids drift with the oracle and the horizon, so re-price the one on screen.
+const REQUOTE_MS = 15_000;
+
+// Reverts that mean "this bid is no good any more", not "the request is":
+// look for another bid on the same request.
+const PICK_ANOTHER = new Set([
+  'OrderExpired',
+  'OrderIsCancelled',
+  'OrderOverfilled',
+  'MakerAmountTooHigh',
+  'ReceivedBelowMinimum',
+  'BpsPerDayTooHigh',
+  'BpsPerDayAboveTakerCap',
+  'DiscountExceedsPrincipal',
+]);
 
 /**
  * Swap now.
  *
- *   idle -> waiting (create the request, poll for bids)
- *        -> ready   (best bid on screen, user decides)
- *        -> done    (accepted)
+ *   idle -> creating (POST /swap)
+ *        -> signing  (user signs the request in the wallet, POST /swap/signature)
+ *        -> waiting  (poll for bids)
+ *        -> ready    (best bid on screen, re-quoted live, user decides)
+ *        -> done     (filled, or approved for a delayed bid)
  *
  * The request stays live for EXPIRY_MINUTES either way, so "no bids yet" is
- * never fatal: the user can keep waiting, or create an auction instead.
+ * never fatal: the user can keep waiting, or cancel.
  */
 function TxHash({ hash, chainId }) {
   const [copied, setCopied] = useState(false);
@@ -52,7 +71,15 @@ function TxHash({ hash, chainId }) {
   );
 }
 
-export default function InstantSwap({ oct, account, chainId, tokens, redemptionTimes }) {
+function toWei(amount, decimals) {
+  try {
+    return Number(amount) > 0 ? ethers.parseUnits(amount, decimals).toString() : null;
+  } catch {
+    return null; // more decimals than the token has
+  }
+}
+
+export default function InstantSwap({ oct, account, chainId, rfq, tokens, sellable, stables, schedules }) {
   const [phase, setPhase] = useState('idle');
   const [sell, setSell] = useState(null);
   const [buy, setBuy] = useState(null);
@@ -60,12 +87,17 @@ export default function InstantSwap({ oct, account, chainId, tokens, redemptionT
   const [over, setOver] = useState(false);
   const [estimate, setEstimate] = useState(0);
 
-  const [requestId, setRequestId] = useState('');
+  const [request, setRequest] = useState(null); // POST /swap response
+  const [signed, setSigned] = useState(false);
   const [bid, setBid] = useState(null);
+  const [quote, setQuote] = useState(null);
+  const [quoteError, setQuoteError] = useState('');
   const [step, setStep] = useState('');
   const [result, setResult] = useState(null);
 
-  const list = useMemo(() => tokens.filter((t) => t.chainId === chainId), [tokens, chainId]);
+  const requestId = request?.requestId || '';
+  const terms = request?.typedData?.message;
+  const schedule = sell && schedules[sell.address.toLowerCase()];
 
   useEffect(() => {
     reset();
@@ -73,7 +105,7 @@ export default function InstantSwap({ oct, account, chainId, tokens, redemptionT
     setBuy(null);
   }, [chainId]);
 
-  const wei = sell && Number(amount) > 0 ? ethers.parseUnits(amount, sell.decimals).toString() : null;
+  const wei = sell ? toWei(amount, sell.decimals) : null;
 
   // Free oracle quote so the buy field isn't blank while we wait for a bid.
   useEffect(() => {
@@ -84,18 +116,47 @@ export default function InstantSwap({ oct, account, chainId, tokens, redemptionT
       .catch(() => setEstimate(0));
   }, [oct, chainId, sell, buy, wei]);
 
+  // Re-price the bid on screen with quoteRFQOrder, the view the fill itself
+  // uses. A revert here (rate over a cap, no price) means it can't fill.
+  useEffect(() => {
+    if (!bid || phase !== 'ready') return;
+    let dead = false;
+    const run = () =>
+      quoteBid(bid, chainId)
+        .then((q) => {
+          if (dead) return;
+          setQuote(q);
+          setQuoteError(q?.belowFloor ? 'This bid now pays less than your minimum.' : '');
+        })
+        .catch((e) => {
+          if (dead) return;
+          setQuote(null);
+          setQuoteError(parseRfqError(e));
+        });
+    run();
+    const t = setInterval(run, REQUOTE_MS);
+    return () => {
+      dead = true;
+      clearInterval(t);
+    };
+  }, [bid, phase, chainId]);
+
   function reset() {
     setPhase('idle');
-    setRequestId('');
+    setRequest(null);
+    setSigned(false);
     setBid(null);
+    setQuote(null);
+    setQuoteError('');
     setResult(null);
     setStep('');
   }
 
   async function swap() {
-    setPhase('waiting');
+    setPhase('creating');
+    let created;
     try {
-      const request = await oct.createSwap({
+      created = await oct.createSwap({
         chainId,
         walletAddress: account,
         redeemAsset: sell.address,
@@ -105,34 +166,47 @@ export default function InstantSwap({ oct, account, chainId, tokens, redemptionT
         slippageTolerance: SLIPPAGE,
         swapType: 'direct',
       });
-      setRequestId(request.requestId);
-
-      // POST /swap already held the connection open for a moment, so a fast
-      // solver is in the response. Poll the same requestId for the rest.
-      const bids = request.bids?.length ? request.bids : await pollForBids(oct, request.requestId);
-
-      if (!bids.length) {
-        setPhase('empty');
-        return;
-      }
-      setBid(bids[0]); // ranked best first
-      setPhase('ready');
     } catch (e) {
       alert(e.message);
-      reset();
+      return reset();
     }
+    setRequest(created);
+
+    if (created.signatureRequired === false) {
+      setSigned(true);
+      return waitForBids(created);
+    }
+    return sign(created);
   }
 
-  // Poll the request we already created. Calling swap() again here would
-  // publish a second RFQ for the same intent and leave the first one live.
-  async function keepWaiting() {
+  // The signature is the user's consent to the trade. Bids can arrive before
+  // it, but none can settle without it, so ask for it straight away.
+  async function sign(req = request) {
+    setPhase('signing');
+    try {
+      const signature = await signRequest(req.typedData, chainId, { rfq, account });
+      await oct.submitRequestSignature(req.requestId, signature);
+      setSigned(true);
+    } catch (e) {
+      alert(parseRfqError(e));
+      setPhase('unsigned');
+      return;
+    }
+    return waitForBids(req);
+  }
+
+  // Poll the request we already created. Creating another here would publish
+  // a second RFQ for the same intent and leave the first one live.
+  async function waitForBids(req = request) {
     setPhase('waiting');
-    const bids = await pollForBids(oct, requestId);
+    setBid(null);
+    setQuote(null);
+    const bids = req.bids?.length ? req.bids : await pollForBids(oct, req.requestId);
     if (!bids.length) {
       setPhase('empty');
       return;
     }
-    setBid(bids[0]);
+    setBid(bids[0]); // ranked lowest rate first = most for the user
     setPhase('ready');
   }
 
@@ -151,9 +225,36 @@ export default function InstantSwap({ oct, account, chainId, tokens, redemptionT
       setPhase('done');
       setAmount('');
     } catch (e) {
-      alert(e.message);
-      setPhase('ready');
+      alert(parseRfqError(e));
       setStep('');
+      if (e.rfqError === 'SaltIsCancelled') return reset();
+      if (PICK_ANOTHER.has(e.rfqError) || /gone|expire|pick another/i.test(e.message)) {
+        return waitForBids({ requestId });
+      }
+      setPhase('ready');
+    }
+  }
+
+  // DELETE /request closes it off-chain and hands back cancelSalt(user, salt).
+  // A signed request is only truly dead once that lands on-chain; an unsigned
+  // one can never settle, so the API call is enough.
+  async function cancel() {
+    setPhase('cancelling');
+    try {
+      let cancelTx = null;
+      try {
+        ({ cancelTx } = await oct.cancelRequest(requestId));
+      } catch {
+        // Origin-allowlisted; build cancelSalt ourselves below.
+      }
+      if (signed) {
+        await cancelRequest({ chainId, account, cancelTx, rfq, salt: terms?.salt, onStep: setStep });
+      }
+      reset();
+    } catch (e) {
+      alert(parseRfqError(e));
+      setStep('');
+      setPhase(signed ? 'empty' : 'unsigned');
     }
   }
 
@@ -162,12 +263,7 @@ export default function InstantSwap({ oct, account, chainId, tokens, redemptionT
       <div className="center-page">
         <section className="card narrow done">
           <SuccessMark />
-          <h2>Redemption processed</h2>
-          <p className="sub">
-            {result.settlement === 'delayed'
-              ? `Accepted. Settles by ${new Date(result.settlesBy).toLocaleString()}.`
-              : 'Your swap has settled on-chain.'}
-          </p>
+          <Done result={result} sell={sell} buy={buy} terms={terms} />
           {result.txHash && <TxHash hash={result.txHash} chainId={chainId} />}
           <button className="primary block" onClick={reset}>Close</button>
         </section>
@@ -175,14 +271,20 @@ export default function InstantSwap({ oct, account, chainId, tokens, redemptionT
     );
   }
 
-  const busy = phase === 'waiting' || phase === 'accepting';
+  const busy = ['creating', 'signing', 'waiting', 'accepting', 'cancelling'].includes(phase);
+  const buyDecimals = bid?.metadata?.redemptionAssetData?.decimals ?? buy?.decimals;
+  const bidReceive = quote?.received ?? bid?.quotedNet;
 
   let label = 'Instant Redeem';
   if (!account) label = 'Connect wallet';
+  else if (!rfq) label = 'Not available on this chain';
   else if (!sell || !buy) label = 'Select tokens';
   else if (!wei) label = 'Enter an amount';
   else if (over) label = `Not enough ${sell.symbol}`;
+  else if (phase === 'creating') label = 'Creating request...';
+  else if (phase === 'signing') label = 'Sign in wallet';
   else if (phase === 'waiting') label = 'Waiting for bids...';
+  else if (phase === 'cancelling') label = step || 'Cancelling...';
 
   return (
     <div className="center-page">
@@ -198,7 +300,8 @@ export default function InstantSwap({ oct, account, chainId, tokens, redemptionT
 
         <AssetField
           label="You sell"
-          tokens={list}
+          tokens={tokens}
+          allowed={sellable}
           token={sell}
           onToken={setSell}
           exclude={buy}
@@ -211,41 +314,39 @@ export default function InstantSwap({ oct, account, chainId, tokens, redemptionT
         />
 
         <AssetField
-          label={bid ? 'You receive (firm bid)' : 'You receive (oracle estimate)'}
-          tokens={list}
+          label={bid ? 'You receive (quote)' : 'You receive (oracle estimate)'}
+          tokens={tokens}
+          allowed={stables}
           token={buy}
           onToken={setBuy}
           exclude={sell}
-          amount={
-            bid
-              ? n(fmt(bid.makerAmount, bid.metadata?.redemptionAssetData?.decimals ?? buy?.decimals))
-              : estimate ? n(estimate) : ''
-          }
+          amount={bid ? (bidReceive != null ? n(fmt(bidReceive, buyDecimals)) : '') : estimate ? n(estimate) : ''}
           onAmount={() => {}}
           readOnly
         />
 
+        {!bid && schedule && (
+          <p className="hint">
+            {sell.symbol} redeems in {horizon(schedule.horizonSeconds)}. Bidders quote a rate per day over
+            that wait, up to {rate(schedule.maxBpsPerDay)}.
+          </p>
+        )}
+
         {/* Stays up through 'accepting' so the numbers the user agreed to are
             still on screen while they confirm in the wallet. */}
         {bid && (
-          <BidDetails
-            bid={bid}
-            buySymbol={buy?.symbol}
-            sellSymbol={sell?.symbol}
-            redemptionTime={redemptionTimes[sell?.address?.toLowerCase()]}
-          />
+          <BidDetails bid={bid} quote={quote} terms={terms} buySymbol={buy?.symbol} buyDecimals={buy?.decimals} />
+        )}
+        {bid && quoteError && <p className="hint warn">{quoteError}</p>}
+
+        {phase === 'unsigned' && (
+          <p className="hint">
+            The request is created but not signed, so no bid can settle. Sign it, or discard it.
+          </p>
         )}
 
-        {/* {phase === 'waiting' && (
-          <p className="hint">
-            Swap request is live for {EXPIRY_MINUTES} minutes. Waiting for a solver to quote it...
-          </p>
-        )} */}
-
         {phase === 'empty' && (
-          <p className="hint">
-            No bids yet. Keep waiting or create another auction.
-          </p>
+          <p className="hint">No bids yet. Keep waiting, or cancel the request.</p>
         )}
 
         {bid ? (
@@ -255,17 +356,69 @@ export default function InstantSwap({ oct, account, chainId, tokens, redemptionT
             {phase === 'accepting' && <Spinner />}
             {phase === 'accepting' ? step || 'Working...' : 'Accept bid'}
           </button>
+        ) : phase === 'unsigned' ? (
+          <button className="primary block" onClick={() => sign()}>Sign in wallet</button>
         ) : (
           <button
             className="primary block"
-            disabled={!account || !sell || !buy || !wei || over || busy}
-            onClick={phase === 'empty' ? keepWaiting : swap}
+            disabled={!account || !rfq || !sell || !buy || !wei || over || busy}
+            onClick={phase === 'empty' ? () => waitForBids() : swap}
           >
             {busy && <Spinner />}
             {phase === 'empty' ? 'Keep waiting' : label}
           </button>
         )}
+
+        {(phase === 'empty' || phase === 'unsigned') && (
+          <button className="ghost block" onClick={cancel}>
+            {signed ? 'Cancel request' : 'Discard request'}
+          </button>
+        )}
       </section>
     </div>
+  );
+}
+
+// What actually happened, from the RFQOrderFilled event rather than the quote.
+function Done({ result, sell, buy, terms }) {
+  const buyDecimals = result.bid?.metadata?.redemptionAssetData?.decimals ?? buy?.decimals;
+  const sellDecimals = result.bid?.metadata?.redeemAssetData?.decimals ?? sell?.decimals;
+
+  if (result.settlement === 'delayed') {
+    const floor = result.quote?.floor ?? terms?.minReceivedAmount;
+    return (
+      <>
+        <h2>Bid accepted</h2>
+        <p className="sub">
+          Octarine fills this bid with your signed request
+          {result.settlesBy ? ` by about ${new Date(result.settlesBy).toLocaleString()}` : ' once the bidder funds'}.
+          {floor != null && ` You receive at least ${n(fmt(floor, buyDecimals))} ${buy?.symbol}.`}
+        </p>
+      </>
+    );
+  }
+
+  const f = result.filled;
+  if (!f) {
+    return (
+      <>
+        <h2>Redemption processed</h2>
+        <p className="sub">Your swap has settled on-chain.</p>
+      </>
+    );
+  }
+  return (
+    <>
+      <h2>Redemption processed</h2>
+      <p className="sub">
+        Sold {n(fmt(f.takerAmountFilled, sellDecimals))} {sell?.symbol} for{' '}
+        <strong>{n(fmt(f.received, buyDecimals))} {buy?.symbol}</strong>.
+      </p>
+      <dl className="rows">
+        <div><dt>Fee</dt><dd>{n(fmt(f.fee, buyDecimals))} {buy?.symbol}</dd></div>
+        {f.makerBpsPerDay != null && <div><dt>Rate</dt><dd>{rate(f.makerBpsPerDay)}</dd></div>}
+        {f.horizonSeconds != null && <div><dt>Horizon</dt><dd>{horizon(f.horizonSeconds)}</dd></div>}
+      </dl>
+    </>
   );
 }

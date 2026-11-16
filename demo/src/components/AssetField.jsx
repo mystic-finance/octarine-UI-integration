@@ -7,6 +7,10 @@ import { fmt, n } from '../lib/format';
  * One side of a pair: amount input + token select, plus an optional balance
  * chip that doubles as a Max button.
  *
+ * `allowed` (a Set of lowercased addresses) narrows the select: the RFQ only
+ * buys listed RWAs, and only pays in stablecoins, so "You sell" gets the
+ * listed RWAs and "You receive" the stables.
+ *
  * `onOverBalance` lets the parent disable its submit button without having to
  * read the balance itself.
  */
@@ -16,6 +20,7 @@ export default function AssetField({
   token,
   onToken,
   exclude,
+  allowed,
   amount,
   onAmount,
   readOnly = false,
@@ -65,7 +70,16 @@ export default function AssetField({
     onOverBalance?.(over);
   }, [over, onOverBalance]);
 
-  const list = tokens.filter((t) => t.address !== exclude?.address);
+  const list = tokens.filter(
+    (t) => t.address !== exclude?.address && (!allowed || allowed.has(t.address.toLowerCase())),
+  );
+
+  // A token can drop out of the allowed list under us (chain switch, schedules
+  // loading, an asset halted). Don't leave it selected.
+  const stale = !!token && !!allowed && !allowed.has(token.address.toLowerCase());
+  useEffect(() => {
+    if (stale) onToken(null);
+  }, [stale, onToken]);
 
   return (
     <>
@@ -90,7 +104,7 @@ export default function AssetField({
           value={token?.address || ''}
           onChange={(e) => onToken(list.find((t) => t.address === e.target.value) || null)}
         >
-          <option value="">Token</option>
+          <option value="">{list.length ? 'Token' : 'None available'}</option>
           {list.map((t) => (
             <option key={t.address} value={t.address}>{t.symbol}</option>
           ))}
